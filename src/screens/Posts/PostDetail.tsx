@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Icon } from "../../components/common/CommonComponents";
 import { timeAgo } from "../../components/common/CommonComponents";
-import { DemoMap } from "../Map/DemoMap";
+import { PointMap } from "../../components/map/KuskaMap";
+import { coordsOf } from "../../utils/geo";
 import type { Comment, Post, User } from "../../types";
 
 export function PostDetail({
@@ -77,7 +78,10 @@ export function PostDetail({
             <Icon name="pin" size={17} />
             {post.location}
           </p>
-          <DemoMap single />
+          <PointMap
+            point={coordsOf(post)}
+            kind={post.category === "Emergencia" ? "emergency" : "community"}
+          />
         </div>
         {post.category === "Emergencia" && (
           <div className="safety-note">

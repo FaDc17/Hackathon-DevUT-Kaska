@@ -84,6 +84,8 @@ export const initialServices: Service[] = [
     createdAt: Date.now() - 8 * 24 * 60 * 60_000,
     contactPhone: "987654321",
     location: "A 6 cuadras · Pueblo Libre",
+    lat: -12.074,
+    lng: -77.064,
     image: photos.textile,
     reviews: [
       {
@@ -120,6 +122,8 @@ export const initialServices: Service[] = [
     createdAt: Date.now() - 5 * 24 * 60 * 60_000,
     contactPhone: "986543210",
     location: "A 1.2 km · Breña",
+    lat: -12.059,
+    lng: -77.052,
     image: photos.electric,
     reviews: [
       {
@@ -148,6 +152,8 @@ export const initialServices: Service[] = [
     createdAt: Date.now() - 3 * 24 * 60 * 60_000,
     contactPhone: "985432109",
     location: "A 900 m · Jesús María",
+    lat: -12.071,
+    lng: -77.054,
     image: photos.dogs,
     reviews: [],
   },
@@ -164,6 +170,8 @@ export const initialPosts: Post[] = [
     category: "Solidaridad",
     district: "Pueblo Libre",
     location: "Parque San Martín · Pueblo Libre",
+    lat: -12.071,
+    lng: -77.061,
     createdAt: Date.now() - 12 * 60_000,
   },
   {
@@ -176,6 +184,8 @@ export const initialPosts: Post[] = [
     category: "Necesito",
     district: "Pueblo Libre",
     location: "Mercado Bolívar · Pueblo Libre",
+    lat: -12.074,
+    lng: -77.066,
     createdAt: Date.now() - 48 * 60_000,
     image: photos.dogs,
   },
@@ -189,6 +199,8 @@ export const initialPosts: Post[] = [
     category: "Emergencia",
     district: "Pueblo Libre",
     location: "Av. Sucre · referencia aproximada",
+    lat: -12.069,
+    lng: -77.067,
     createdAt: Date.now() - 22 * 60_000,
   },
 ];

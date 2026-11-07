@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { LocationPicker } from "../../components/map/KuskaMap";
+import { coordsOf, districtCenter, roundPoint } from "../../utils/geo";
+import type { LatLng } from "../../utils/geo";
 import type { FormEvent } from "react";
 import { Icon, Modal } from "../../components/common/CommonComponents";
 import type { Service, User } from "../../types";
@@ -14,6 +17,7 @@ export function CreateService({
   onPublish: (s: Service) => void;
 }) {
   const [error, setError] = useState("");
+  const [point, setPoint] = useState<LatLng | null>(null);
   const [selectedPrice, setSelectedPrice] = useState<string>(defaultPriceRange.label);
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -23,8 +27,12 @@ export function CreateService({
     if (!selectedPrice) return setError("Selecciona un rango de precio");
     const range = priceRanges.find((item) => item.label === selectedPrice);
     if (!range) return setError("Selecciona un rango de precio");
+    const newId = Date.now();
+    const coords = point
+      ? roundPoint(point)
+      : coordsOf({ id: newId, district: user.district });
     onPublish({
-      id: Date.now(),
+      id: newId,
       owner: user.name,
       ownerId: user.id,
       title: String(fd.get("title")),
@@ -38,6 +46,8 @@ export function CreateService({
       createdAt: Date.now(),
       contactPhone: user.phone,
       location: String(fd.get("location")),
+      lat: coords.lat,
+      lng: coords.lng,
       image: photos.textile,
       reviews: [],
       mine: true,
@@ -94,6 +104,15 @@ export function CreateService({
           Ubicación pública aproximada
           <input name="location" defaultValue={`${user.district} · zona aproximada`} />
         </label>
+        <div className="picker-field">
+          <span className="picker-label">Marca la zona en el mapa</span>
+          <LocationPicker
+            center={districtCenter(user.district)}
+            value={point}
+            onChange={setPoint}
+            kind="service"
+          />
+        </div>
         <p className="privacy-note">Nunca mostraremos automáticamente tu dirección privada.</p>
         {error && <p className="form-error">{error}</p>}
         <div className="modal-actions">
