@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">Kuska</string>
-    <string name="title_activity_main">Kuska</string>
-    <string name="package_name">com.kuska.app</string>
-    <string name="custom_url_scheme">com.kuska.app</string>
-</resources>
