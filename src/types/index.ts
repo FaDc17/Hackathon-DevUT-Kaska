@@ -61,6 +61,8 @@ export type Service = {
   createdAt: number;
   contactPhone: string;
   location: string;
+  lat?: number;
+  lng?: number;
   image: string;
   reviews: Review[];
   mine?: boolean;
@@ -75,6 +77,8 @@ export type Post = {
   category: "Necesito" | "Solidaridad" | "Emergencia";
   district: string;
   location: string;
+  lat?: number;
+  lng?: number;
   image?: string;
   createdAt: number;
   mine?: boolean;

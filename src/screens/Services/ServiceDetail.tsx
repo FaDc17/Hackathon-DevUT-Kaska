@@ -1,5 +1,6 @@
 import { Icon, Stars, Rating, formatPhone } from "../../components/common/CommonComponents";
-import { DemoMap } from "../Map/DemoMap";
+import { PointMap } from "../../components/map/KuskaMap";
+import { coordsOf } from "../../utils/geo";
 import { EmptyState } from "../Home/EmptyState";
 import type { Service } from "../../types";
 import { getServicePriceLabel } from "../../utils/services";
@@ -64,7 +65,7 @@ export function ServiceDetail({
               <p>{service.location}</p>
             </div>
           </div>
-          <DemoMap single />
+          <PointMap point={coordsOf(service)} kind="service" />
         </div>
         <div className="detail-section reviews">
           <div className="section-heading compact">
