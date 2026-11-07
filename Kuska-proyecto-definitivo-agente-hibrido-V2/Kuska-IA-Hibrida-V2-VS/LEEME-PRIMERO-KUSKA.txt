@@ -1,0 +1,53 @@
+KUSKA — PROYECTO COMPLETO PARA VISUAL STUDIO CODE
+Versión consolidada: React + TypeScript + Vite + Capacitor + Agente híbrido V2
+
+QUE CONTIENE
+- El código original de la aplicación y su carpeta android.
+- Agente Kuska (chat existente) conectado a Cloudflare Workers AI cuando hay internet.
+- Búsqueda local y navegación guiada cuando no hay conexión (usa servicios y publicaciones ya cargados en el estado/localStorage).
+- En resultados locales, botones para abrir servicio, perfil del vecino y mapa general.
+- Rangos de precio originales de Kuska, sin modificar.
+- Diseño de otras pantallas y archivos CSS originales, sin cambios.
+
+INSTRUCCIONES PARA ABRIR EN WINDOWS
+1. Extrae el ZIP COMPLETO, no abras los archivos directamente dentro del comprimido.
+2. En Visual Studio Code: Archivo > Abrir carpeta y selecciona esta carpeta, la que contiene package.json.
+3. Abre Terminal > Nuevo terminal (PowerShell) y ejecuta:
+       npm.cmd install
+       npm.cmd run build
+       npm.cmd run dev
+4. Abre la URL local indicada por Vite, normalmente http://localhost:8443/.
+5. Inicia sesión > ¿Necesitas ayuda? > Agente Kuska.
+6. Pruebas online: 'Busco una pollería por menos de 50 soles en Bellavista'.
+   El resultado cloud actual procede de datos DEMO en Cloudflare, NO de Azure.
+7. Prueba con un proveedor local precargado: 'Busco un electricista en Breña'.
+   Podrás abrir la ficha de servicio, el perfil de David Cruz y el mapa general.
+8. Sin internet (con app ya abierta): solicita 'Abre Comunidad' o 'Busco un electricista en Breña'.
+   Los resultados locales pueden estar desactualizados; no hay IA generativa offline.
+
+CAMBIOS EXACTOS RESPECTO AL ZIP DE TUS COMPAÑEROS
+- Modificado: src/screens/Assistant/AgentChat.tsx
+- Agregado:    src/screens/Assistant/hybridSearch.ts
+- Modificado: src/App.tsx (SOLO la invocación del agente para pasar datos y callbacks existentes)
+- Agregado:    LEEME-PRIMERO-KUSKA.txt (esta guía)
+El resto de archivos de la aplicación son idénticos al ZIP original. No se cambió src/index.css.
+
+PENDIENTE PARA LA VERSION FINAL CON EL EQUIPO
+- SQLite local y sincronización offline con Azure SQL: NO incluidos.
+- Base de datos Azure: NO conectada; coordinar con tu compañero.
+- Google Maps real y ubicaciones verificadas: NO incluidos.
+- Las pollerías DEMO en Cloudflare no tienen proveedor ni coordenadas: no se debe inventar botón de perfil/mapa.
+- Actualmente la búsqueda local depende del almacenamiento ya existente de Kuska (localStorage).
+- Seguridad y privacidad de usuarios/contactos deben revisarse antes de usar datos personales reales.
+
+NO ES UNA APK YA ACTUALIZADA. Para producir una nueva APK hay que sincronizar/build con Capacitor y Android Studio.
+El backend Cloudflare ya desplegado funciona independientemente de que la PC esté encendida, mientras haya internet y cuotas disponibles.
+
+VALIDACION HECHA AQUÍ
+- Verificación de sintaxis TypeScript de App, AgentChat e hybridSearch: correcta.
+- Pruebas básicas de la búsqueda local y navegación: correctas.
+- No se completó npm install/build completo en este entorno por falta de paquetes en caché.
+  Ejecuta los comandos de arriba en tu propia PC para confirmar la compilación completa.
+
+RECOMENDACION
+Antes de cambiar la copia del equipo, conserva un respaldo o trabaja en una rama de Git.
