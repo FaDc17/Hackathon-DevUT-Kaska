@@ -371,7 +371,19 @@ export default function App() {
       );
     }
     if (screen === "assistant") return <Assistant go={go} back={back} />;
-    if (screen === "agentChat") return <AgentChat back={back} />;
+    if (screen === "agentChat")
+      return (
+        <AgentChat
+          back={back}
+          district={user.district}
+          services={services}
+          posts={posts}
+          navigate={go}
+          openService={openService}
+          openProfile={openProfile}
+          openPost={openPost}
+        />
+      );
     return (
       <Tutorial
         close={() => {
