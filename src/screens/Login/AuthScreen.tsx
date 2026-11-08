@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
 import { hashPassword } from "../../utils/auth";
 import { Icon, Logo } from "../../components/common/CommonComponents";
 import type { Screen, User } from "../../types";
+import { authenticateUser } from "../../database/repositories/users";
 
 export function AuthScreen({
   accounts,
@@ -26,12 +27,7 @@ export function AuthScreen({
     setLoading(true);
     const name = String(fd.get("user")).trim().toLowerCase();
     const passwordHash = await hashPassword(String(fd.get("password")));
-    const account = accounts.find(
-      (candidate) =>
-        candidate.passwordHash &&
-        candidate.name.toLowerCase() === name &&
-        candidate.passwordHash === passwordHash,
-    );
+    const account = await authenticateUser(String(fd.get("user")), passwordHash);
     setLoading(false);
     if (!account) {
       setError("Usuario o contraseña incorrectos. Inténtalo nuevamente");

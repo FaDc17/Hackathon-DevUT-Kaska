@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Icon, Header } from "../../components/common/CommonComponents";
+import { listChannels, type HelpChannel } from "../../database/repositories/channels";
 
 export function Channels({
   state,
@@ -15,6 +16,14 @@ export function Channels({
   notify: (s: string) => void;
 }) {
   const [manual, setManual] = useState(district);
+  const [channels, setChannels] = useState<HelpChannel[]>([]);
+  useEffect(() => {
+    let active = true;
+    void listChannels(manual).then((items) => {
+      if (active) setChannels(items);
+    });
+    return () => { active = false; };
+  }, [manual]);
   const activate = () => {
     setState("asking");
     window.setTimeout(() => {
@@ -32,11 +41,9 @@ export function Channels({
       );
     }, 500);
   };
-  const authorities = [
-    ["Serenazgo", "Atención municipal del distrito", null],
-    ["Bomberos", "Central de emergencias nacional", "116"],
-    ["Policía Nacional del Perú", "Central de emergencia policial", "105"],
-  ] as const;
+  const authorities = channels.length ? channels : [
+    { name: "Serenazgo", description: "Contactos pendientes de sincronización local", phone: "" },
+  ];
   return (
     <section className="page">
       <Header title="Canales de ayuda" kicker="CONTACTOS OFICIALES" onBack={back} />
@@ -79,14 +86,19 @@ export function Channels({
         </div>
       </div>
       <div className="authority-list">
-        {authorities.map(([name, desc, number]) => (
+        {authorities.map((channel) => (
+          (() => {
+            const name = String(channel.name);
+            const description = String(channel.description || "");
+            const number = String(channel.phone || "");
+            return (
           <article key={name}>
             <span className="authority-icon">
               <Icon name="phone" />
             </span>
             <div>
               <h3>{name}</h3>
-              <p>{desc}</p>
+              <p>{description}</p>
               <small>{number || "Contacto pendiente de verificación"}</small>
             </div>
             <a
@@ -98,6 +110,8 @@ export function Channels({
               {number || "No disponible"}
             </a>
           </article>
+            );
+          })()
         ))}
       </div>
       <p className="verification-note">

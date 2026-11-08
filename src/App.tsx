@@ -31,19 +31,10 @@ import { BottomNav, Icon } from "./components/common/CommonComponents";
 import type { Post, Screen, Service, User } from "./types";
 
 import { defaultPriceRange, initialPosts, initialServices, initialUsers, priceRanges } from "./data/demo";
-
-
-function loadAccounts() {
-  try {
-    const stored = JSON.parse(localStorage.getItem("kuska-accounts") || "[]") as User[];
-    return [
-      ...initialUsers,
-      ...stored.filter((item) => !initialUsers.some((seed) => seed.id === item.id)),
-    ];
-  } catch {
-    return initialUsers;
-  }
-}
+import { seedDemoData } from "./database/seed";
+import { createUser, getSavedSession, listUsers, saveSession, updateUser } from "./database/repositories/users";
+import { addReview, createService, listServices } from "./database/repositories/services";
+import { addComment, createPost, listPosts } from "./database/repositories/posts";
 
 function normalizeServices(
   items: Array<Service & { price?: string }>,
@@ -120,25 +111,13 @@ function normalizePosts(items: Post[]): Post[] {
 }
 
 export default function App() {
-  const [accounts, setAccounts] = useState<User[]>(loadAccounts);
-  const [sessionId, setSessionId] = useState(() => localStorage.getItem("kuska-session") || "");
+  const [accounts, setAccounts] = useState<User[]>([]);
+  const [sessionId, setSessionId] = useState("");
   const user = accounts.find((account) => account.id === sessionId) || null;
-  const [screen, setScreen] = useState<Screen>(() => (sessionId ? "home" : "login"));
+  const [screen, setScreen] = useState<Screen>("login");
   const [history, setHistory] = useState<Screen[]>([]);
-  const [services, setServices] = useState<Service[]>(() => {
-    try {
-      return normalizeServices(JSON.parse(localStorage.getItem("kuska-services") || ""), accounts);
-    } catch {
-      return initialServices;
-    }
-  });
-  const [posts, setPosts] = useState<Post[]>(() => {
-    try {
-      return normalizePosts(JSON.parse(localStorage.getItem("kuska-posts") || ""));
-    } catch {
-      return initialPosts;
-    }
-  });
+  const [services, setServices] = useState<Service[]>([]);
+  const [posts, setPosts] = useState<Post[]>([]);
   const [selectedService, setSelectedService] = useState<number>(1);
   const [selectedPost, setSelectedPost] = useState<number>(1);
   const [selectedNeighborId, setSelectedNeighborId] = useState("");
@@ -152,19 +131,26 @@ export default function App() {
   );
 
   useEffect(() => {
-    localStorage.removeItem("kuska-user");
-    localStorage.removeItem("kuska-usernames");
+    let active = true;
+    void (async () => {
+      await seedDemoData();
+      const [storedAccounts, storedServices, storedPosts, savedSession] = await Promise.all([
+        listUsers(),
+        listServices(),
+        listPosts(),
+        getSavedSession(),
+      ]);
+      if (!active) return;
+      setAccounts(storedAccounts);
+      setServices(storedServices);
+      setPosts(storedPosts);
+      if (savedSession) {
+        setSessionId(savedSession);
+        setScreen("home");
+      }
+    })();
+    return () => { active = false; };
   }, []);
-  useEffect(() => {
-    const registered = accounts.filter((account) => account.passwordHash);
-    localStorage.setItem("kuska-accounts", JSON.stringify(registered));
-  }, [accounts]);
-  useEffect(() => {
-    if (sessionId && user) localStorage.setItem("kuska-session", sessionId);
-    else localStorage.removeItem("kuska-session");
-  }, [sessionId, user]);
-  useEffect(() => localStorage.setItem("kuska-services", JSON.stringify(services)), [services]);
-  useEffect(() => localStorage.setItem("kuska-posts", JSON.stringify(posts)), [posts]);
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(""), 2800);
@@ -224,9 +210,11 @@ export default function App() {
           go={go}
           notify={notify}
           onLogin={(id) => {
-            setSessionId(id);
-            setHistory([]);
-            setScreen("home");
+            void saveSession(id).then(() => {
+              setSessionId(id);
+              setHistory([]);
+              setScreen("home");
+            });
           }}
         />
       );
@@ -237,10 +225,14 @@ export default function App() {
           go={go}
           notify={notify}
           onRegister={(account) => {
-            setAccounts((current) => [...current, account]);
-            setSessionId(account.id);
-            setHistory([]);
-            setScreen("home");
+            void (async () => {
+              await createUser(account);
+              await saveSession(account.id);
+              setAccounts(await listUsers());
+              setSessionId(account.id);
+              setHistory([]);
+              setScreen("home");
+            })().catch((error) => notify(error instanceof Error ? error.message : String(error)));
           }}
         />
       );
@@ -252,9 +244,11 @@ export default function App() {
           go={go}
           notify={notify}
           onLogin={(id) => {
-            setSessionId(id);
-            setHistory([]);
-            setScreen("home");
+            void saveSession(id).then(() => {
+              setSessionId(id);
+              setHistory([]);
+              setScreen("home");
+            });
           }}
         />
       );
@@ -321,13 +315,9 @@ export default function App() {
           user={user}
           back={back}
           onComment={(comment) => {
-            setPosts((current) =>
-              current.map((post) =>
-                post.id === selectedPost
-                  ? { ...post, comments: [...(post.comments || []), comment] }
-                  : post,
-              ),
-            );
+          void addComment(selectedPost, comment).then(async () => {
+            setPosts(await listPosts());
+          }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
             notify("Comentario publicado");
           }}
           openProfile={openProfile}
@@ -356,10 +346,12 @@ export default function App() {
           openAbout={() => setModal("about")}
           edit={() => setModal("edit")}
           logout={() => {
-            setSessionId("");
-            setHistory([]);
-            setScreen("login");
-            notify("Sesión cerrada de forma segura");
+            void saveSession(null).finally(() => {
+              setSessionId("");
+              setHistory([]);
+              setScreen("login");
+              notify("Sesión cerrada de forma segura");
+            });
           }}
         />
       );
@@ -408,7 +400,9 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(service) => {
-              setServices((s) => [service, ...s]);
+              void createService(service, service.image).then(async () => {
+                setServices(await listServices());
+              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
               setModal(null);
               notify("Tu servicio ya está visible");
               setCategory("Todos");
@@ -420,7 +414,9 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(post) => {
-              setPosts((p) => [post, ...p]);
+              void createPost(post, post.image).then(async () => {
+                setPosts(await listPosts());
+              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
               setModal(null);
               notify("Publicación compartida con tu comunidad");
             }}
@@ -431,7 +427,9 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(post) => {
-              setPosts((p) => [post, ...p]);
+              void createPost(post, post.image).then(async () => {
+                setPosts(await listPosts());
+              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
               setModal(null);
               notify("Alerta vecinal publicada");
             }}
@@ -442,11 +440,9 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(review) => {
-              setServices((all) =>
-                all.map((s) =>
-                  s.id === selectedService ? { ...s, reviews: [...s.reviews, review] } : s,
-                ),
-              );
+              void addReview(selectedService, review).then(async () => {
+                setServices(await listServices());
+              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
               setModal(null);
               notify("Gracias por compartir tu experiencia");
             }}
@@ -461,6 +457,7 @@ export default function App() {
               setAccounts((current) =>
                 current.map((account) => (account.id === user.id ? next : account)),
               );
+              void updateUser(next).then(() => listUsers()).then(setAccounts);
               setServices((current) =>
                 current.map((service) => ({
                   ...service,
@@ -496,6 +493,7 @@ export default function App() {
                   account.id === user.id ? { ...account, about } : account,
                 ),
               );
+              void updateUser({ ...user, about }).then(() => listUsers()).then(setAccounts);
               setModal(null);
               notify("Información personal actualizada");
             }}
