@@ -9,11 +9,13 @@ export function AuthScreen({
   go,
   notify,
   onLogin,
+  localDevLogin,
 }: {
   accounts: User[];
   go: (s: Screen) => void;
   notify: (s: string) => void;
   onLogin: (response: AuthResponse) => Promise<void>;
+  localDevLogin?: (username: string, password: string) => Promise<void>;
 }) {
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
@@ -25,6 +27,12 @@ export function AuthScreen({
       return setError("Completa tu usuario y contraseña para continuar.");
     setLoading(true);
     try {
+      if (localDevLogin) {
+        await localDevLogin(String(fd.get("user")), String(fd.get("password")));
+        setError("");
+        notify("¡Qué gusto tenerte de vuelta!");
+        return;
+      }
       const response = await login(String(fd.get("user")).trim(), String(fd.get("password")));
       await onLogin(response);
       setError("");

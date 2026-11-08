@@ -18,6 +18,9 @@ export type Screen =
   | "tutorial"
   | "neighborProfile";
 
+export type EntityId = string | number;
+export type SyncStatus = "pendiente" | "sincronizado" | "error";
+
 export type User = {
   id: string;
   remoteId?: string;
@@ -32,7 +35,7 @@ export type User = {
 };
 
 export type Review = {
-  id: number;
+  id: EntityId;
   user: string;
   userId?: string;
   stars: number;
@@ -41,7 +44,7 @@ export type Review = {
 };
 
 export type Comment = {
-  id: number;
+  id: EntityId;
   user: string;
   userId?: string;
   content: string;
@@ -49,7 +52,12 @@ export type Comment = {
 };
 
 export type Service = {
-  id: number;
+  id: EntityId;
+  districtId?: number;
+  categoryId?: number;
+  syncStatus?: SyncStatus;
+  imagePending?: boolean;
+  isDemo?: boolean;
   owner: string;
   ownerId?: string;
   title: string;
@@ -71,7 +79,12 @@ export type Service = {
 };
 
 export type Post = {
-  id: number;
+  id: EntityId;
+  districtId?: number;
+  typeId?: number;
+  syncStatus?: SyncStatus;
+  imagePending?: boolean;
+  isDemo?: boolean;
   owner: string;
   ownerId?: string;
   title: string;

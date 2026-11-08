@@ -8,7 +8,7 @@ export function AllServices({
   back,
 }: {
   services: Service[];
-  openService: (id: number) => void;
+  openService: (id: string | number) => void;
   back: () => void;
 }) {
   return (

@@ -34,6 +34,12 @@ public class CatalogController {
 		return catalogService.distritos(departamentoId);
 	}
 
+	@GetMapping("/provincias")
+	public List<CatalogDtos.ProvinciaDto> provincias(
+			@RequestParam(required = false) Integer departamentoId) {
+		return catalogService.provincias(departamentoId);
+	}
+
 	@GetMapping("/categorias-servicio")
 	public List<CatalogDtos.CategoriaServicioDto> categoriasServicio() {
 		return catalogService.categoriasServicios();

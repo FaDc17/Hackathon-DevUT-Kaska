@@ -22,6 +22,17 @@ export async function apiRequest<T>(
   options: RequestInit = {},
   operationId?: string,
 ): Promise<T> {
+  if (
+    Capacitor.isNativePlatform() &&
+    import.meta.env.PROD &&
+    (!configuredBaseUrl || !/^https:\/\//i.test(configuredBaseUrl))
+  ) {
+    throw new ApiError(
+      "La aplicación necesita la dirección HTTPS del servidor Kuska.",
+      0,
+      "API_NOT_CONFIGURED",
+    );
+  }
   const headers = new Headers(options.headers);
   if (options.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -33,14 +44,26 @@ export async function apiRequest<T>(
   if (operationId) headers.set("X-Operation-Id", operationId);
 
   let response: Response;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  options.signal?.addEventListener("abort", abort, { once: true });
+  if (options.signal?.aborted) controller.abort();
+  const timeout = setTimeout(abort, 15_000);
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
   } catch {
     throw new ApiError(
       "No hay conexión con Kuska. Comprueba Internet e inténtalo nuevamente.",
       0,
       "NETWORK_ERROR",
     );
+  } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", abort);
   }
 
   if (response.status === 401 && !path.startsWith("/api/auth/login")) {
@@ -48,9 +71,10 @@ export async function apiRequest<T>(
     window.dispatchEvent(new Event("kuska:unauthorized"));
   }
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as
-      | { message?: string; error?: string }
-      | null;
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+      error?: string;
+    } | null;
     throw new ApiError(
       body?.message || "No fue posible completar la solicitud.",
       response.status,

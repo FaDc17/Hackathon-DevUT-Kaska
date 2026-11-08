@@ -76,6 +76,36 @@ public class AuthService {
 		return toPublicUser(findActiveUser(userId));
 	}
 
+	@Transactional(readOnly = true)
+	public UserDtos.NeighborProfile neighborProfile(String userId) {
+		UserDtos.PublicUser user = toPublicUser(findActiveUser(userId));
+		return new UserDtos.NeighborProfile(user.id(), user.username(), user.districtId(),
+				user.district(), user.province(), user.departmentId(), user.department(), user.about());
+	}
+
+	@Transactional
+	public void deleteAccount(String userId, UserDtos.AccountDeletionRequest request) {
+		Usuario usuario = findActiveUser(userId);
+		if (!"ELIMINAR".equals(request.confirmation())) {
+			throw new IllegalArgumentException("Escribe ELIMINAR para confirmar la eliminación de tu cuenta.");
+		}
+		if (!passwordEncoder.matches(request.password(), usuario.getContrasenaHash())) {
+			throw new AccountVerificationException();
+		}
+		// Keep foreign keys and original identifiers. All changes commit together.
+		usuarios.softDeleteOwnedServiceImages(userId);
+		usuarios.softDeleteOwnedPostImages(userId);
+		usuarios.softDeleteOwnedEmergencies(userId);
+		usuarios.softDeleteRelatedReviews(userId);
+		usuarios.softDeleteRelatedReplies(userId);
+		usuarios.softDeleteRelatedFavorites(userId);
+		usuarios.softDeleteOwnedServices(userId);
+		usuarios.softDeleteOwnedPosts(userId);
+		usuario.setEstado(false);
+		usuario.setEliminado(true);
+		usuarios.saveAndFlush(usuario);
+	}
+
 	@Transactional
 	public UserDtos.PublicUser updateProfile(String userId, UserDtos.ProfileUpdateRequest request) {
 		Usuario usuario = findActiveUser(userId);

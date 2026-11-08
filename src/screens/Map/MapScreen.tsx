@@ -18,13 +18,13 @@ export function MapScreen({
 }: {
   services: Service[];
   posts: Post[];
-  openService: (id: number) => void;
-  openPost: (id: number) => void;
+  openService: (id: string | number) => void;
+  openPost: (id: string | number) => void;
   district: string;
   back: () => void;
 }) {
   const [type, setType] = useState<MapType>("Servicios");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<string | number | null>(null);
   const [userPos, setUserPos] = useState<LatLng | null>(null);
   const [flyTarget, setFlyTarget] = useState<LatLng | null>(null);
   const [status, setStatus] = useState("");
@@ -64,7 +64,7 @@ export function MapScreen({
     if (first) setFlyTarget(coordsOf(first));
   };
 
-  const select = (id: number) => {
+  const select = (id: string | number) => {
     setSelectedId(id);
     const it = items.find((x) => x.id === id);
     if (it) setFlyTarget(coordsOf(it));

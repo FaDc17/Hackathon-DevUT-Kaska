@@ -8,16 +8,32 @@ export function AboutModal({
 }: {
   value: string;
   onClose: () => void;
-  onSave: (value: string) => void;
+  onSave: (value: string) => Promise<void>;
 }) {
   const [about, setAbout] = useState(value);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   return (
-    <Modal title="Sobre mí" onClose={onClose}>
+    <Modal
+      title="Sobre mí"
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+    >
       <form
         className="stack-form"
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
-          onSave(about.trim());
+          if (busy) return;
+          setBusy(true);
+          setError("");
+          try {
+            await onSave(about.trim());
+          } catch (error) {
+            setError(error instanceof Error ? error.message : "No se pudo guardar la información.");
+          } finally {
+            setBusy(false);
+          }
         }}
       >
         <p className="about-intro">
@@ -34,11 +50,18 @@ export function AboutModal({
           />
           <span className="character-count">{about.length} / 200</span>
         </label>
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
         <div className="modal-actions">
-          <button type="button" className="secondary-button" onClick={onClose}>
+          <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>
             Cancelar
           </button>
-          <button className="primary-button">Guardar</button>
+          <button className="primary-button" disabled={busy}>
+            {busy ? "Guardando…" : "Guardar"}
+          </button>
         </div>
       </form>
     </Modal>

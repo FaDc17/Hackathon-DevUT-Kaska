@@ -3,6 +3,8 @@ package com.kuska.api.user;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -33,5 +35,13 @@ public class UsuarioController {
 			@AuthenticationPrincipal AuthenticatedUser user,
 			@Valid @RequestBody UserDtos.ProfileUpdateRequest request) {
 		return authService.updateProfile(user.id(), request);
+	}
+
+	@DeleteMapping
+	public ResponseEntity<Void> deleteAccount(
+			@AuthenticationPrincipal AuthenticatedUser user,
+			@Valid @RequestBody UserDtos.AccountDeletionRequest request) {
+		authService.deleteAccount(user.id(), request);
+		return ResponseEntity.noContent().build();
 	}
 }

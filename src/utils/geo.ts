@@ -6,28 +6,28 @@ export type LatLng = { lat: number; lng: number };
 /** Centro aproximado de cada distrito de Lima (para centrar el mapa y como respaldo). */
 export const DISTRICT_CENTERS: Record<string, LatLng> = {
   "Pueblo Libre": { lat: -12.0725, lng: -77.063 },
-  "Breña": { lat: -12.058, lng: -77.051 },
+  Breña: { lat: -12.058, lng: -77.051 },
   "Jesús María": { lat: -12.07, lng: -77.051 },
-  "Lince": { lat: -12.0845, lng: -77.0366 },
+  Lince: { lat: -12.0845, lng: -77.0366 },
   "Magdalena del Mar": { lat: -12.0912, lng: -77.0716 },
   "San Miguel": { lat: -12.0773, lng: -77.0858 },
-  "Lima": { lat: -12.0464, lng: -77.0428 },
+  Lima: { lat: -12.0464, lng: -77.0428 },
   "Cercado de Lima": { lat: -12.0464, lng: -77.0428 },
   "San Isidro": { lat: -12.0977, lng: -77.0365 },
-  "Miraflores": { lat: -12.1211, lng: -77.0297 },
-  "Barranco": { lat: -12.1497, lng: -77.0219 },
-  "Surquillo": { lat: -12.1117, lng: -77.0119 },
+  Miraflores: { lat: -12.1211, lng: -77.0297 },
+  Barranco: { lat: -12.1497, lng: -77.0219 },
+  Surquillo: { lat: -12.1117, lng: -77.0119 },
   "San Borja": { lat: -12.1078, lng: -76.9992 },
   "Santiago de Surco": { lat: -12.1454, lng: -76.9918 },
-  "Surco": { lat: -12.1454, lng: -76.9918 },
+  Surco: { lat: -12.1454, lng: -76.9918 },
   "La Molina": { lat: -12.0856, lng: -76.9054 },
   "La Victoria": { lat: -12.0654, lng: -77.0158 },
   "San Luis": { lat: -12.0756, lng: -76.9966 },
-  "Chorrillos": { lat: -12.1686, lng: -77.0126 },
+  Chorrillos: { lat: -12.1686, lng: -77.0126 },
   "San Martín de Porres": { lat: -12.0, lng: -77.0784 },
   "Los Olivos": { lat: -11.9702, lng: -77.0716 },
-  "Independencia": { lat: -11.9964, lng: -77.0518 },
-  "Rímac": { lat: -12.0289, lng: -77.0378 },
+  Independencia: { lat: -11.9964, lng: -77.0518 },
+  Rímac: { lat: -12.0289, lng: -77.0378 },
 };
 
 export const LIMA_CENTER: LatLng = { lat: -12.0464, lng: -77.0428 };
@@ -58,7 +58,7 @@ export const roundPoint = (p: LatLng): LatLng => ({
  * con un desplazamiento fijo derivado del id (máx. ~600 m) para que los marcadores no se apilen.
  */
 export function coordsOf(item: {
-  id: number;
+  id: string | number;
   district?: string;
   lat?: number;
   lng?: number;
@@ -67,8 +67,13 @@ export function coordsOf(item: {
     return { lat: item.lat, lng: item.lng };
   }
   const c = districtCenter(item.district);
-  const h = Math.abs(Math.sin(item.id * 12.9898) * 43758.5453) % 1;
-  const h2 = Math.abs(Math.sin(item.id * 78.233) * 12345.6789) % 1;
+  // This number only offsets overlapping markers; the original record ID is preserved.
+  const markerSeed =
+    typeof item.id === "number"
+      ? item.id
+      : [...item.id].reduce((value, char) => (value * 31 + char.charCodeAt(0)) | 0, 0);
+  const h = Math.abs(Math.sin(markerSeed * 12.9898) * 43758.5453) % 1;
+  const h2 = Math.abs(Math.sin(markerSeed * 78.233) * 12345.6789) % 1;
   return roundPoint({ lat: c.lat + (h - 0.5) * 0.011, lng: c.lng + (h2 - 0.5) * 0.011 });
 }
 
