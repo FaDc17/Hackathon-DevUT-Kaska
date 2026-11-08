@@ -2,6 +2,7 @@ import { getDatabase } from "../connection";
 import type { SQLiteDBConnection } from "@capacitor-community/sqlite";
 import type { User } from "../../types";
 import type { PublicUser, ProfileUpdateRequest } from "../../services/auth";
+import { enqueueSyncOperation } from "./syncQueue";
 
 type UserRow = {
   IdUsuario: string;
@@ -154,11 +155,7 @@ export async function updateUser(user: User, pendingSync = true): Promise<void> 
       districtId,
       about: user.about || "",
     };
-    await db.run(
-      `INSERT INTO ColaSincronizacion (Entidad, EntidadId, Operacion, Payload)
-       VALUES ('Usuarios', ?, 'actualizar', ?);`,
-      [remoteId, JSON.stringify(payload)],
-    );
+    await enqueueSyncOperation("Usuarios", remoteId, "actualizar", payload);
   }
 }
 

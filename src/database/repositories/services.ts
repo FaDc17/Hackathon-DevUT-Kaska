@@ -1,5 +1,33 @@
 import { getDatabase } from '../connection';
+import { enqueueSyncOperation } from './syncQueue';
 import type { Service, Review } from '../../types';
+import { readRemoteList } from '../../services/remoteRead';
+
+type RemoteService = {
+  id: string;
+  ownerId: string;
+  owner: string;
+  phone: string;
+  district: string;
+  category: string;
+  title: string;
+  description: string;
+  priceMin: number | null;
+  priceMax: number | null;
+  location: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  publishedAt: string;
+  images: Array<{ url: string }>;
+  reviews: Array<{
+    id: string;
+    userId: string;
+    username: string;
+    rating: number;
+    comment: string | null;
+    createdAt: string;
+  }>;
+};
 
 type ServiceRow = {
   IdServicio: string;
@@ -35,15 +63,43 @@ async function categoryId(db: Awaited<ReturnType<typeof getDatabase>>, category:
     (row) => normalize(String(row.NombreCategoria)) === normalize(category),
   );
   if (result) return Number(result.IdCategoria);
-  const fallback = await db.query(
-    'SELECT IdCategoria FROM CategoriasServicio ORDER BY IdCategoria LIMIT 1;',
-  );
-  const resultId = fallback.values?.[0]?.IdCategoria;
-  if (resultId === undefined) throw new Error(`Categoria no disponible: ${category}`);
-  return Number(resultId);
+  throw new Error(`Categoria no disponible: ${category}`);
 }
 
 export async function listServices(): Promise<Service[]> {
+  const remoteServices = await readRemoteList<RemoteService>('/api/servicios');
+  if (remoteServices) {
+    return remoteServices.map((service) => ({
+      id: uiId(service.id),
+      owner: service.owner,
+      ownerId: service.ownerId,
+      title: service.title,
+      description: service.description,
+      category: service.category,
+      priceLabel: service.priceMin == null && service.priceMax == null
+        ? 'Precio por coordinar'
+        : `S/ ${service.priceMin ?? 0} – S/ ${service.priceMax ?? service.priceMin}`,
+      priceMin: service.priceMin,
+      priceMax: service.priceMax,
+      currency: 'PEN',
+      district: service.district,
+      createdAt: new Date(service.publishedAt).getTime(),
+      contactPhone: service.phone,
+      location: service.location || service.district,
+      lat: service.latitude ?? undefined,
+      lng: service.longitude ?? undefined,
+      image: service.images[0]?.url || '',
+      reviews: service.reviews.map((review) => ({
+        id: uiId(review.id),
+        user: review.username,
+        userId: review.userId,
+        stars: review.rating,
+        comment: review.comment || '',
+        date: review.createdAt,
+      })),
+    } satisfies Service));
+  }
+
   const db = await getDatabase();
   const result = await db.query(`
     SELECT s.*, u.NombreUsuario, u.Celular, c.NombreCategoria, d.NombreDistrito,
@@ -99,28 +155,52 @@ export async function listServices(): Promise<Service[]> {
 
 export async function createService(service: Service, image?: string): Promise<void> {
   const db = await getDatabase();
+  if (!service.ownerId) throw new Error('No se puede publicar un servicio sin usuario autenticado.');
   const idCategory = await categoryId(db, service.category);
+  const serviceId = String(service.id);
+  const imageId = `img-${serviceId}`;
   await db.run(
     `INSERT INTO Servicios
       (IdServicio, IdUsuario, IdCategoria, Titulo, Descripcion, PrecioMinimo, PrecioMaximo,
        UbicacionAproximada, Latitud, Longitud, RadioCoberturaMetros, SyncEstado)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente');`,
     [
-      String(service.id), service.ownerId, idCategory, service.title, service.description,
+      serviceId, service.ownerId, idCategory, service.title, service.description,
       service.priceMin, service.priceMax, service.location, service.lat ?? null, service.lng ?? null, 1000,
     ],
   );
+  await enqueueSyncOperation('Servicios', serviceId, 'crear', {
+    id: serviceId,
+    categoryId: idCategory,
+    title: service.title,
+    description: service.description,
+    priceMin: service.priceMin,
+    priceMax: service.priceMax,
+    location: service.location,
+    latitude: service.lat ?? null,
+    longitude: service.lng ?? null,
+    coverageRadiusMeters: 1000,
+    images: [],
+  });
   if (image) {
     await db.run(
       `INSERT INTO ImagenesServicio (IdImagen, IdServicio, RutaLocal, UrlRemota, Orden)
        VALUES (?, ?, ?, ?, 0);`,
-      [`img-${service.id}`, String(service.id), image.startsWith('data:') ? null : image, image.startsWith('http') ? image : null],
+      [imageId, serviceId, image.startsWith('http') ? null : image, image.startsWith('http') ? image : null],
     );
+    await enqueueSyncOperation('ImagenesServicio', imageId, 'crear', {
+      id: imageId,
+      serviceId,
+      url: image,
+      order: 0,
+    });
   }
 }
 
 export async function addReview(serviceId: number | string, review: Review): Promise<void> {
   const db = await getDatabase();
+  if (!review.userId) throw new Error('No se puede guardar una reseña sin usuario autenticado.');
+  const serviceKey = String(serviceId);
   await db.run(
     `INSERT INTO ResenasServicio (IdResena, IdServicio, IdUsuario, Calificacion, Comentario, SyncEstado)
      VALUES (?, ?, ?, ?, ?, 'pendiente')
@@ -129,6 +209,17 @@ export async function addReview(serviceId: number | string, review: Review): Pro
        Comentario = excluded.Comentario,
        FechaActualizacion = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
        SyncEstado = 'pendiente';`,
-    [`review-${review.id}`, String(serviceId), review.userId, review.stars, review.comment],
+    [`review-${review.id}`, serviceKey, review.userId, review.stars, review.comment],
   );
+  const persisted = await db.query(
+    'SELECT IdResena FROM ResenasServicio WHERE IdServicio = ? AND IdUsuario = ? LIMIT 1;',
+    [serviceKey, review.userId],
+  );
+  const reviewId = String(persisted.values?.[0]?.IdResena || `review-${review.id}`);
+  await enqueueSyncOperation('ResenasServicio', reviewId, 'actualizar', {
+    id: reviewId,
+    serviceId: serviceKey,
+    rating: review.stars,
+    comment: review.comment,
+  });
 }

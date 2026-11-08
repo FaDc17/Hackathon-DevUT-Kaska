@@ -1,5 +1,40 @@
 import { getDatabase } from '../connection';
+import { enqueueSyncOperation } from './syncQueue';
 import type { Comment, Post } from '../../types';
+import { readRemoteList } from '../../services/remoteRead';
+
+type RemotePost = {
+  id: string;
+  ownerId: string;
+  owner: string;
+  district: string;
+  type: string;
+  title: string;
+  description: string;
+  location: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  publishedAt: string;
+  images: Array<{ url: string }>;
+  replies: Array<{
+    id: string;
+    userId: string;
+    username: string;
+    message: string;
+    createdAt: string;
+  }>;
+};
+
+function postCategory(value: string): Post['category'] {
+  switch (value) {
+    case 'Necesito':
+    case 'Solidaridad':
+    case 'Emergencia':
+      return value;
+    default:
+      throw new Error(`Tipo de publicación no compatible con Kuska: ${value}`);
+  }
+}
 
 function uiId(value: string): number {
   if (/^\d+$/.test(value)) return Number(value);
@@ -17,6 +52,31 @@ async function postTypeId(db: Awaited<ReturnType<typeof getDatabase>>, category:
 }
 
 export async function listPosts(): Promise<Post[]> {
+  const remotePosts = await readRemoteList<RemotePost>('/api/publicaciones');
+  if (remotePosts) {
+    return remotePosts.map((post) => ({
+        id: uiId(post.id),
+        owner: post.owner,
+        ownerId: post.ownerId,
+        title: post.title,
+        description: post.description,
+        category: postCategory(post.type),
+        district: post.district,
+        location: post.location || post.district,
+        lat: post.latitude ?? undefined,
+        lng: post.longitude ?? undefined,
+        image: post.images[0]?.url || undefined,
+        createdAt: new Date(post.publishedAt).getTime(),
+        comments: post.replies.map((reply) => ({
+          id: uiId(reply.id),
+          user: reply.username,
+          userId: reply.userId,
+          content: reply.message,
+          createdAt: new Date(reply.createdAt).getTime(),
+        })),
+      }));
+  }
+
   const db = await getDatabase();
   const result = await db.query(`
     SELECT p.*, u.NombreUsuario, t.NombreTipo, d.NombreDistrito,
@@ -63,36 +123,74 @@ export async function listPosts(): Promise<Post[]> {
 
 export async function createPost(post: Post, image?: string): Promise<void> {
   const db = await getDatabase();
+  if (!post.ownerId) throw new Error('No se puede publicar sin usuario autenticado.');
   const typeId = await postTypeId(db, post.category);
+  const postId = String(post.id);
+  const imageId = `img-${postId}`;
   await db.run(
     `INSERT INTO Publicaciones
       (IdPublicacion, IdUsuario, IdTipoPublicacion, Titulo, Descripcion, UbicacionAproximada,
        Latitud, Longitud, RadioAproximadoMetros, SyncEstado)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente');`,
-    [String(post.id), post.ownerId, typeId, post.title, post.description, post.location, post.lat ?? null, post.lng ?? null, 1000],
+    [postId, post.ownerId, typeId, post.title, post.description, post.location, post.lat ?? null, post.lng ?? null, 1000],
   );
+  await enqueueSyncOperation('Publicaciones', postId, 'crear', {
+    id: postId,
+    typeId,
+    title: post.title,
+    description: post.description,
+    location: post.location,
+    latitude: post.lat ?? null,
+    longitude: post.lng ?? null,
+    approximateRadiusMeters: 1000,
+    images: [],
+  });
   if (image) {
     await db.run(
       `INSERT INTO ImagenesPublicacion (IdImagen, IdPublicacion, RutaLocal, UrlRemota, Orden)
        VALUES (?, ?, ?, ?, 0);`,
-      [`img-${post.id}`, String(post.id), image.startsWith('data:') ? null : image, image.startsWith('http') ? image : null],
+      [imageId, postId, image.startsWith('http') ? null : image, image.startsWith('http') ? image : null],
     );
+    await enqueueSyncOperation('ImagenesPublicacion', imageId, 'crear', {
+      id: imageId,
+      postId,
+      url: image,
+      order: 0,
+    });
   }
   if (post.category === 'Emergencia') {
-    await db.run(
-      `INSERT INTO Emergencias (IdEmergencia, IdPublicacion, EstadoEmergencia, NivelPrioridad, SyncEstado)
-       VALUES (?, ?, 'reportada', 'media', 'pendiente');`,
-      [`emergency-${post.id}`, String(post.id)],
+    const emergency = await db.query(
+      'SELECT IdEmergencia FROM Emergencias WHERE IdPublicacion = ? LIMIT 1;',
+      [postId],
     );
+    const emergencyId = emergency.values?.[0]?.IdEmergencia;
+    if (emergencyId === undefined) {
+      throw new Error('SQLite no creó el reporte de emergencia asociado a la publicación.');
+    }
+    await enqueueSyncOperation('Emergencias', String(emergencyId), 'crear', {
+      id: String(emergencyId),
+      postId,
+      status: 'reportada',
+      priority: 'media',
+      followUp: null,
+    });
   }
 }
 
 export async function addComment(postId: number | string, comment: Comment): Promise<void> {
   const db = await getDatabase();
+  if (!comment.userId) throw new Error('No se puede responder sin usuario autenticado.');
+  const replyId = `reply-${comment.id}-${postId}`;
+  const postKey = String(postId);
   await db.run(
     `INSERT INTO RespuestasPublicacion
       (IdRespuesta, IdPublicacion, IdUsuario, Mensaje, SyncEstado)
      VALUES (?, ?, ?, ?, 'pendiente');`,
-    [`reply-${comment.id}-${postId}`, String(postId), comment.userId, comment.content],
+    [replyId, postKey, comment.userId, comment.content],
   );
+  await enqueueSyncOperation('RespuestasPublicacion', replyId, 'crear', {
+    id: replyId,
+    postId: postKey,
+    message: comment.content,
+  });
 }
