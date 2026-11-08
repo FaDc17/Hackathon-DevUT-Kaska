@@ -8,12 +8,14 @@ export function Emergency({
   openModal,
   go,
   back,
+  more, loading, loadMore,
 }: {
   posts: Post[];
   openPost: (id: Post["id"]) => void;
   openModal: () => void;
   go: (s: Screen) => void;
   back: () => void;
+  more?: boolean; loading?: boolean; loadMore?: () => void;
 }) {
   const emergencies = posts.filter((p) => p.category === "Emergencia");
   return (
@@ -62,6 +64,7 @@ export function Emergency({
           <EmptyState text="No hay alertas activas en este momento." />
         )}
       </div>
+      {more && <button className="show-all-button" disabled={loading} onClick={loadMore}>{loading ? "Cargando…" : "Cargar más"}</button>}
     </section>
   );
 }

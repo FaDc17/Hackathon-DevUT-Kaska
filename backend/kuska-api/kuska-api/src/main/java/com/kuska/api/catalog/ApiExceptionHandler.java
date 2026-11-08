@@ -12,6 +12,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,6 +26,14 @@ public class ApiExceptionHandler {
 	private static final Logger logger = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
 	public record ErrorResponse(Instant timestamp, int status, String error, String message) {
+	}
+
+	// Multipart parsing can fail before Spring selects a controller.
+	@ExceptionHandler(MaxUploadSizeExceededException.class)
+	public ResponseEntity<ErrorResponse> handleUploadTooLarge(MaxUploadSizeExceededException exception) {
+		return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(new ErrorResponse(
+				Instant.now(), HttpStatus.PAYLOAD_TOO_LARGE.value(), "IMAGE_TOO_LARGE",
+				"La fotografía es demasiado grande. Elige una más pequeña."));
 	}
 
 	@ExceptionHandler(ResourceNotFoundException.class)

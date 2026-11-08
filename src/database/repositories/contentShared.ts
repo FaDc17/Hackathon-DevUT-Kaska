@@ -6,6 +6,7 @@ import type { capSQLiteSet } from "@capacitor-community/sqlite";
 import type { EntityId } from "../../types";
 import { ensureQueueOwnership } from "./syncQueue";
 import { initialUsers } from "../../data/demo";
+import { encodeQueuePayload, decodeQueuePayload } from "../../services/privateStorage";
 
 export const normalized = (value: string) =>
   value
@@ -58,6 +59,7 @@ export async function commitPending(
   const db = await getDatabase();
   const session = await getSecureSession();
   if (!session) throw new Error("Inicia sesión para guardar los cambios.");
+  const encodedPayload = await encodeQueuePayload(entity, session.userId, payload);
   const failed = await db.query(
     `SELECT IdOperacion,Operacion FROM ColaSincronizacion
     WHERE Entidad=? AND EntidadId=? AND OwnerId=? AND ErrorUltimo IN ('DATA_CONFLICT','INVALID_OPERATION','FORBIDDEN','NOT_FOUND')
@@ -85,7 +87,7 @@ export async function commitPending(
       queueStatements.push({
         statement:
           "INSERT INTO ColaSincronizacion (Entidad, EntidadId, Operacion, Payload, OwnerId, ClientOperationId) VALUES (?, ?, ?, ?, ?, ?);",
-        values: [entity, id, action, JSON.stringify(payload), session.userId, crypto.randomUUID()],
+        values: [entity, id, action, encodedPayload, session.userId, crypto.randomUUID()],
       });
     }
   } else if (
@@ -103,14 +105,14 @@ export async function commitPending(
       {
         statement:
           "UPDATE ColaSincronizacion SET Payload=?,ErrorUltimo=NULL,Intentos=0,ClientOperationId=?,FechaActualizacion=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE IdOperacion=?;",
-        values: [JSON.stringify(payload), crypto.randomUUID(), previous.IdOperacion],
+        values: [encodedPayload, crypto.randomUUID(), previous.IdOperacion],
       },
     );
   } else {
     queueStatements.push({
       statement:
         "INSERT INTO ColaSincronizacion (Entidad, EntidadId, Operacion, Payload, OwnerId, ClientOperationId) VALUES (?, ?, ?, ?, ?, ?);",
-      values: [entity, id, action, JSON.stringify(payload), session.userId, crypto.randomUUID()],
+      values: [entity, id, action, encodedPayload, session.userId, crypto.randomUUID()],
     });
   }
   await db.executeSet([...statements, ...queueStatements], true);
@@ -148,7 +150,10 @@ export async function contentQueue(): Promise<QueuedPayload[]> {
     "SELECT Entidad, EntidadId, Operacion, Payload FROM ColaSincronizacion WHERE OwnerId=? ORDER BY IdOperacion;",
     [session.userId],
   );
-  return (result.values ?? []).flatMap((row) => {
+  const decoded = await Promise.all((result.values ?? []).map(async (row) => ({ ...row,
+    Payload: await decodeQueuePayload(String(row.Entidad), session.userId, String(row.Payload)),
+  })));
+  return decoded.flatMap((row) => {
     try {
       return [
         {

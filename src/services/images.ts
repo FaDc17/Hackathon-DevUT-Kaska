@@ -1,5 +1,6 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import type { EntityId } from "../types";
+import { compressImage, MAX_IMAGE_BYTES } from "./imageCompression";
 
 const persistentImages = registerPlugin<{
   save(options: { id: string; dataUrl: string }): Promise<{ uri: string }>;
@@ -52,8 +53,10 @@ export function recordImageReference(record: {
 export function saveBrowserImage(kind: "service" | "post", id: EntityId, image?: string): void {
   if (!image || isRemoteImage(image)) return;
   try {
-    if (localStorage.getItem(`kuska:local-image:${kind}:${id}`) !== image)
+    if (localStorage.getItem(`kuska:local-image:${kind}:${id}`) !== image) {
       localStorage.removeItem(`kuska:image-uploaded:${kind}:${id}`);
+      localStorage.removeItem(`kuska:image-error:${kind}:${id}`);
+    }
     localStorage.setItem(`kuska:local-image:${kind}:${id}`, image);
   } catch {
     throw new Error(
@@ -69,6 +72,7 @@ export function browserImage(kind: "service" | "post", id: EntityId): string | n
 export function removeBrowserImage(kind: "service" | "post", id: EntityId): void {
   localStorage.removeItem(`kuska:local-image:${kind}:${id}`);
   localStorage.removeItem(`kuska:image-uploaded:${kind}:${id}`);
+  localStorage.removeItem(`kuska:image-error:${kind}:${id}`);
 }
 
 export function browserImageIsPending(kind: "service" | "post", id: EntityId): boolean {
@@ -76,16 +80,27 @@ export function browserImageIsPending(kind: "service" | "post", id: EntityId): b
 }
 
 /** Local files are never sent to SQL or marked uploaded without a remote image store. */
-export async function persistSelectedImage(
+const selectedImages = new WeakMap<File, Promise<string>>();
+export function persistSelectedImage(file: File | string, id?: EntityId): Promise<string> {
+  if (typeof file === "string" || id !== undefined) return saveSelectedImage(file, id);
+  const previous = selectedImages.get(file);
+  if (previous) return previous;
+  const work = saveSelectedImage(file).catch(error => { selectedImages.delete(file); throw error; });
+  selectedImages.set(file, work);
+  return work;
+}
+
+async function saveSelectedImage(
   file: File | string,
   id: EntityId = crypto.randomUUID(),
 ): Promise<string> {
   if (
     typeof file !== "string" &&
-    (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024)
+    (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > MAX_IMAGE_BYTES)
   ) {
-    throw new Error("Elige una foto JPG, PNG o WebP de hasta 5 MB.");
+    throw new Error("Elige una foto JPG, PNG o WebP de hasta 10 MB.");
   }
+  const prepared = typeof file === "string" ? file : await compressImage(file);
   const dataUrl =
     typeof file === "string"
       ? file
@@ -94,7 +109,7 @@ export async function persistSelectedImage(
           reader.onload = () => resolve(String(reader.result));
           reader.onerror = () =>
             reject(new Error("No se pudo guardar la imagen. Inténtalo nuevamente."));
-          reader.readAsDataURL(file);
+          reader.readAsDataURL(prepared as Blob);
         });
   if (!Capacitor.isNativePlatform() || !dataUrl.startsWith("data:image/")) return dataUrl;
   const saved = await persistentImages.save({ id: String(id), dataUrl });

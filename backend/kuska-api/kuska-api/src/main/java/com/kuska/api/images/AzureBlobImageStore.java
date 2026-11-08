@@ -88,9 +88,9 @@ public class AzureBlobImageStore implements BlobImageStore {
     @Override public StoredImage download(String permanentUrl) {
         try {
             var blob=existingBlob(permanentUrl);
-            if(blob.getProperties().getBlobSize()>5L*1024*1024) throw new BlobUnavailableException();
+            if(blob.getProperties().getBlobSize()>BlobImageService.MAX_IMAGE_BYTES) throw new BlobUnavailableException();
             byte[] bytes=blob.downloadContent().toBytes();
-            if(bytes.length>5*1024*1024) throw new BlobUnavailableException();
+            if(bytes.length>BlobImageService.MAX_IMAGE_BYTES) throw new BlobUnavailableException();
             return new StoredImage(bytes,BlobImageService.detectType(bytes));
         } catch(IllegalArgumentException invalid) {throw invalid;}
         catch(RuntimeException failure) {throw new BlobUnavailableException();}

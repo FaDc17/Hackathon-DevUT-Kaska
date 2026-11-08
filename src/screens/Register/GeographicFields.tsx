@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  districtsForProvince,
   getGeographicCatalog,
+  provincesForDepartment,
   type District,
   type GeographicCatalog,
 } from "../../services/catalogs";
@@ -17,7 +19,7 @@ export function GeographicFields({
   const [catalog, setCatalog] = useState<GeographicCatalog | null>(null);
   const [departmentId, setDepartmentId] = useState("");
   const [province, setProvince] = useState("");
-  const [selectedId, setSelectedId] = useState(districtId ? String(districtId) : "");
+  const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const initialSelectionApplied = useRef(false);
@@ -40,12 +42,12 @@ export function GeographicFields({
   }, [attempt]);
   useEffect(() => {
     if (!catalog?.districts.length || initialSelectionApplied.current) return;
-    initialSelectionApplied.current = true;
     const matches = catalog.districts.filter(
       (d) => districtId !== undefined && d.id === districtId,
     );
     // Un nombre sin ID tampoco identifica un lugar si el catálogo tiene regiones incompletas.
     if (matches.length === 1) {
+      initialSelectionApplied.current = true;
       const d = matches[0];
       setDepartmentId(String(d.idDepartamento));
       setProvince(d.provincia);
@@ -53,11 +55,9 @@ export function GeographicFields({
       onChange(d);
     }
   }, [catalog, districtId, districtName]);
-  const districts =
-    catalog?.districts.filter((d) => String(d.idDepartamento) === departmentId) || [];
-  const provinces = [...new Set(districts.map((d) => d.provincia))].sort((a, b) =>
-    a.localeCompare(b, "es"),
-  );
+  const allDistricts = catalog?.districts || [];
+  const provinces = provincesForDepartment(allDistricts, departmentId);
+  const provinceDistricts = districtsForProvince(allDistricts, departmentId, province);
   return (
     <>
       {error && (
@@ -116,6 +116,9 @@ export function GeographicFields({
           }}
         >
           <option value="">Ahora elige tu provincia</option>
+          {departmentId && !provinces.length && (
+            <option value="" disabled>Sin especificar — pendiente de catálogo válido</option>
+          )}
           {provinces.map((name) => (
             <option key={name} value={name}>
               {name}
@@ -123,6 +126,12 @@ export function GeographicFields({
           ))}
         </select>
       </label>
+      {departmentId && !provinces.length && (
+        <p className="verification-note" role="status">
+          Este departamento no tiene provincias ni un distrito “Sin especificar” con ID válido.
+          El catálogo central debe habilitar esa ubicación antes de completar el registro.
+        </p>
+      )}
       <label>
         Distrito *
         <select
@@ -132,18 +141,11 @@ export function GeographicFields({
           value={selectedId}
           onChange={(event) => {
             setSelectedId(event.target.value);
-            onChange(
-              districts.find(
-                (d) => String(d.id) === event.target.value && d.provincia === province,
-              ),
-            );
+            onChange(provinceDistricts.find((d) => String(d.id) === event.target.value));
           }}
         >
           <option value="">Selecciona tu distrito</option>
-          {districts
-            .filter((d) => d.provincia === province)
-            .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"))
-            .map((d) => (
+          {provinceDistricts.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.nombre}
               </option>

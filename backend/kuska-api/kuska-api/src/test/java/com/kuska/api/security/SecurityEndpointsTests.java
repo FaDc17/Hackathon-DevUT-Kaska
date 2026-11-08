@@ -77,6 +77,27 @@ class SecurityEndpointsTests {
 	}
 
 	@Test
+	void renewalRequiresAStillValidTokenAndAnActiveAccount() throws Exception {
+		mockMvc.perform(post("/api/auth/refresh")).andExpect(status().isUnauthorized());
+		mockMvc.perform(post("/api/auth/refresh").header("Authorization", "Bearer " + expiredToken()))
+			.andExpect(status().isUnauthorized());
+		String token = jwtService.createAccessToken(new JwtService.UsuarioTokenSubject("user-123", "vecino"));
+		when(usuarioRepository.existsByIdAndEstadoTrueAndEliminadoFalse("user-123")).thenReturn(false);
+		mockMvc.perform(post("/api/auth/refresh").header("Authorization", "Bearer " + token))
+			.andExpect(status().isUnauthorized());
+		verify(authService, never()).renew(any(), any());
+	}
+
+	@Test
+	void authenticatedRenewalUsesTheVerifiedIdentity() throws Exception {
+		when(usuarioRepository.existsByIdAndEstadoTrueAndEliminadoFalse("user-123")).thenReturn(true);
+		String token = jwtService.createAccessToken(new JwtService.UsuarioTokenSubject("user-123", "vecino"));
+		when(authService.renew("user-123", token)).thenReturn(new UserDtos.AuthResponse("renewed", "Bearer", 900, publicUser()));
+		mockMvc.perform(post("/api/auth/refresh").header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk()).andExpect(jsonPath("$.accessToken").value("renewed"));
+	}
+
+	@Test
 	void privateProfileRejectsInvalidAndExpiredTokens() throws Exception {
 		mockMvc.perform(get("/api/usuarios/me").header("Authorization", "Bearer invalid"))
 				.andExpect(status().isUnauthorized());

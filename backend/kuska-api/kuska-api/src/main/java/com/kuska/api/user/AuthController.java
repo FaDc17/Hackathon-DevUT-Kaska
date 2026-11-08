@@ -37,4 +37,11 @@ public class AuthController {
 	public ResponseEntity<Void> logout() {
 		return ResponseEntity.noContent().build();
 	}
+
+	@PostMapping("/refresh")
+	public UserDtos.AuthResponse refresh(
+			@org.springframework.security.core.annotation.AuthenticationPrincipal com.kuska.api.security.AuthenticatedUser user,
+			@org.springframework.web.bind.annotation.RequestHeader("Authorization") String authorization) {
+		return authService.renew(user.id(), authorization.substring(7).trim());
+	}
 }

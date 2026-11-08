@@ -39,6 +39,14 @@ class BlobImageControllerTests {
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error").value("IMAGE_FIELDS_REQUIRED"));
         verifyNoInteractions(service);
     }
+    @Test void oversizedImageUsesTheGlobal413Response() throws Exception {
+        when(service.upload(any(),any(),any(),any(),any()))
+            .thenThrow(new org.springframework.web.multipart.MaxUploadSizeExceededException(10L*1024*1024));
+        mvc.perform(multipart("/api/imagenes").file(new MockMultipartFile("archivo","foto.png","image/png",new byte[]{1}))
+            .param("tipo","servicio").param("entidadId","parent").param("imagenId","image"))
+            .andExpect(status().isPayloadTooLarge()).andExpect(jsonPath("$.error").value("IMAGE_TOO_LARGE"))
+            .andExpect(jsonPath("$.message").value("La fotografía es demasiado grande. Elige una más pequeña."));
+    }
     @Test void temporaryReadPermissionsAreNeverHttpCached() throws Exception {
         when(service.read("servicio","image-original")).thenReturn(new BlobImageService.ReadResult("https://blobkuska.blob.core.windows.net/imagenes/kuska/photo?sig=test-only",600));
         mvc.perform(get("/api/imagenes/servicio/image-original/acceso")).andExpect(status().isOk())

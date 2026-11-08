@@ -5,9 +5,11 @@ vi.mock("../database/connection", () => ({ getDatabase: vi.fn() }));
 import { apiRequest } from "./apiClient";
 import {
   channelsForDistrict,
+  districtsForProvince,
   getGeographicCatalog,
   getHelpChannels,
   phoneLinks,
+  provincesForDepartment,
   type Channel,
   type District,
 } from "./catalogs";
@@ -135,6 +137,28 @@ describe("catálogos públicos y caché web", () => {
       [100, "Callao", "Callao"],
       [999, "Cajamarca", "Jaén"],
     ]);
+  });
+  it("usa el ID central del catálogo especial y no inventa ubicaciones al faltar provincias", () => {
+    const unspecified: District = {
+      id: 7001,
+      idDepartamento: 99,
+      departamento: "Departamento incompleto",
+      provincia: "Sin especificar",
+      nombre: "Sin especificar",
+    };
+    const real: District = {
+      ...bellavista,
+      provincia: "Callao",
+      nombre: "Sin especificar",
+      id: 7002,
+    };
+
+    expect(provincesForDepartment([unspecified, real], "99")).toEqual(["Sin especificar"]);
+    expect(districtsForProvince([unspecified, real], "99", "Sin especificar")).toEqual([
+      unspecified,
+    ]);
+    expect(provincesForDepartment([real], "99")).toEqual([]);
+    expect(districtsForProvince([real], "99", "Sin especificar")).toEqual([]);
   });
   it("consulta canales cacheados sin SQLite nativo en el navegador", async () => {
     vi.stubGlobal("navigator", { onLine: false });

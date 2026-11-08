@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { Icon } from "../../components/common/CommonComponents";
 import type { Screen } from "../../types";
 
@@ -9,7 +8,6 @@ export function RecoverScreen({
   go: (s: Screen) => void;
   notify: (s: string) => void;
 }) {
-  const [sent, setSent] = useState(false);
   return (
     <section className="simple-auth">
       <button className="icon-button" onClick={() => go("login")}>
@@ -20,29 +18,12 @@ export function RecoverScreen({
       </div>
       <span className="eyebrow">RECUPERAR ACCESO</span>
       <h1>Volvamos a encontrarnos</h1>
-      <p>Ingresa tu usuario o celular.</p>
-      {!sent ? (
-        <form
-          className="stack-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setSent(true);
-            notify("La recuperación de contraseña todavía no está disponible.");
-          }}
-        >
-          <label>
-            Usuario o celular
-            <input required placeholder="Ej. Carlos123 o 987 654 321" />
-          </label>
-          <button className="primary-button">Continuar</button>
-        </form>
-      ) : (
-        <div className="success-card">
-          <Icon name="check" />
+      <p>La recuperación requiere verificar un canal de contacto. Todavía no hay un proveedor de SMS o correo habilitado.</p>
+        <div className="verification-note" role="status">
           <h3>Recuperación no disponible</h3>
           <p>Aún no hay un servicio de recuperación conectado. Tu contraseña no se ha cambiado.</p>
+          <p>Si conservas una sesión activa y recuerdas la contraseña actual, puedes cambiarla desde Mi perfil.</p>
         </div>
-      )}
       <button className="secondary-button" onClick={() => go("login")}>
         Volver a iniciar sesión
       </button>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Circle, MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import { Circle, MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import { groupMarkers } from "../../utils/mapMarkers";
 import * as L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { getUserPosition, roundPoint } from "../../utils/geo";
@@ -10,7 +11,7 @@ import type { LatLng } from "../../utils/geo";
  * Si en el APK los mosaicos salen en blanco, cambia solo esta URL por la de otro proveedor.
  */
 export const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-export const TILE_ATTRIBUTION = "© OpenStreetMap";
+export const TILE_ATTRIBUTION = '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>';
 
 export type MarkerKind = "service" | "community" | "emergency";
 export type MapMarker = {
@@ -93,16 +94,26 @@ export function KuskaMap({
       <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} maxZoom={19} />
       <FixSize />
       <FlyTo target={flyTarget} />
-      {markers.map((m) => (
+      {groupMarkers(markers).map((group) => {
+        const m = group.find(marker => marker.id === selectedId) ?? group[0];
+        return (
         <Marker
           key={`${m.kind}-${m.id}`}
           position={[m.lat, m.lng]}
           icon={markerIcon(m.kind, m.id === selectedId)}
           zIndexOffset={m.id === selectedId ? 1000 : 0}
-          alt={m.label}
-          eventHandlers={{ click: () => onSelect(m.id) }}
-        />
-      ))}
+          alt={group.length > 1 ? `${group.length} publicaciones en este punto` : m.label}
+          eventHandlers={{ click: () => { if (group.length === 1) onSelect(m.id); } }}
+        >
+          {group.length > 1 && <Popup><div className="map-point-options">
+            <strong>{group.length} publicaciones aquí</strong>
+            {group.map(entry => <button type="button" key={`${entry.kind}:${entry.id}`} onClick={() => onSelect(entry.id)}>
+              <small>{entry.kind === "service" ? "Servicio" : entry.kind === "emergency" ? "Emergencia" : "Comunidad"}</small>
+              {entry.label}
+            </button>)}
+          </div></Popup>}
+        </Marker>
+      );})}
       {userPos && (
         <Marker position={[userPos.lat, userPos.lng]} icon={userIcon} interactive={false} />
       )}
@@ -111,7 +122,8 @@ export function KuskaMap({
 }
 
 /** Mapa pequeño de solo lectura para los detalles: muestra una zona aproximada, no un punto exacto. */
-export function PointMap({ point, kind }: { point: LatLng; kind: MarkerKind }) {
+export function PointMap({ point, kind }: { point: LatLng | null; kind: MarkerKind }) {
+  if (!point) return <p className="point-map-note">Ubicación en mapa sin especificar.</p>;
   const color = kind === "emergency" ? "#c62828" : kind === "community" ? "#0f766e" : "#1d4ed8";
   return (
     <div className="point-map">
@@ -183,11 +195,12 @@ export function LocationPicker({
   };
   return (
     <div className="location-picker">
+      <small className="range-help">La referencia escrita es independiente del mapa. La zona se guardará al publicar o guardar cambios.</small>
       <div className="picker-map">
         <MapContainer
           center={[start.lat, start.lng]}
           zoom={15}
-          zoomControl={false}
+          zoomControl={true}
           className="real-map"
         >
           <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} maxZoom={19} />

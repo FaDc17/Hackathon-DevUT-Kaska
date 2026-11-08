@@ -16,10 +16,12 @@ import type { AuthResponse, ProfileUpdateRequest } from "./auth";
 import { ApiError } from "./apiClient";
 import { clearSecureSession, getSecureSession, saveSecureSession } from "./secureSession";
 import { getSavedSession } from "../database/repositories/users";
+import { validOfflineSession } from "./offlineSession";
+import { clearBrowserProfile } from "./privateProfile";
 
 export async function establishSession(response: AuthResponse): Promise<User> {
-  const user = await cacheRemoteUser(response.user);
   await saveSecureSession({ accessToken: response.accessToken, userId: response.user.id });
+  const user = await cacheRemoteUser(response.user);
   await saveSession(user.id);
   return user;
 }
@@ -44,7 +46,10 @@ export async function restoreSession(): Promise<User | null> {
       await saveSession(null);
       return null;
     }
-    return getUserById(localId);
+    if (!(error instanceof ApiError) || (error.status !== 0 && error.status < 500) ||
+      !Capacitor.isNativePlatform() || !validOfflineSession(secureSession)) return null;
+    const cached = await getUserById(localId);
+    return cached && [cached.id, cached.remoteId].includes(secureSession.userId) ? cached : null;
   }
 }
 
@@ -193,6 +198,7 @@ export async function closeSession(): Promise<void> {
   } catch {
     // Local logout must still complete when the device is offline or the token expired.
   } finally {
+    clearBrowserProfile();
     await clearSecureSession();
     await saveSession(null);
   }

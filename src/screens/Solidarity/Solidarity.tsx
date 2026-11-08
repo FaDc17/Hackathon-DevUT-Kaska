@@ -2,6 +2,8 @@ import { Icon, Header, PostCard } from "../../components/common/CommonComponents
 import type { Post } from "../../types";
 import { categories } from "../../data/demo";
 import { EmptyState } from "../Home/EmptyState";
+import { prioritizeDistrict, sameDistrict } from "../../utils/geography";
+import type { User } from "../../types";
 
 export function Solidarity({
   posts,
@@ -9,14 +11,16 @@ export function Solidarity({
   openModal,
   showAll,
   back,
+  user,
 }: {
   posts: Post[];
   openPost: (id: string | number) => void;
   openModal: () => void;
   showAll: () => void;
   back: () => void;
+  user: User;
 }) {
-  const items = posts.slice(0, 3);
+  const items = prioritizeDistrict(posts, user).slice(0, 3);
   return (
     <section className="page">
       <Header title="Comunidad" kicker="AYUDA COMUNITARIA" onBack={back} />
@@ -53,13 +57,13 @@ export function Solidarity({
       <div className="section-heading compact">
         <div>
           <span className="eyebrow">COMUNIDAD</span>
-          <h2>Publicaciones recientes</h2>
+          <h2>Cerca de ti</h2>
         </div>
         <span>{items.length} activas</span>
       </div>
       <div className="card-list">
         {items.length ? (
-          items.map((p) => <PostCard key={p.id} post={p} onClick={() => openPost(p.id)} />)
+          items.map((p) => <div key={p.id}><small className="range-help">{sameDistrict(p, user) ? "Tu distrito" : "Otro distrito o ubicación sin especificar"}</small><PostCard post={p} onClick={() => openPost(p.id)} /></div>)
         ) : (
           <EmptyState text="Aún no hay publicaciones en Comunidad." />
         )}

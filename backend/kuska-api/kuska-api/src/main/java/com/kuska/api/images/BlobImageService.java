@@ -18,6 +18,7 @@ import com.kuska.api.content.ContentService;
 @Service
 @Profile("!test")
 public class BlobImageService {
+    public static final long MAX_IMAGE_BYTES = 10L * 1024 * 1024;
     public record UploadResult(String id, String url) { }
     public record ReadResult(String url, int expiresIn) { }
     private final BlobImageStore blobs;
@@ -36,10 +37,11 @@ public class BlobImageService {
                 && !parentId.equals(repository.postImageParent(imageId))) {
             throw new AccessDeniedException("La imagen pertenece a otra publicación.");
         }
-        if (file.isEmpty() || file.getSize()>5L*1024*1024) throw new IllegalArgumentException("Elige una foto de hasta 5 MB.");
+        if (file.isEmpty()) throw new IllegalArgumentException("Selecciona una fotografía válida.");
+        if (file.getSize()>MAX_IMAGE_BYTES) throw new org.springframework.web.multipart.MaxUploadSizeExceededException(MAX_IMAGE_BYTES);
         byte[] bytes;
         try { bytes=file.getBytes(); } catch(IOException failure) { throw new IllegalArgumentException("No se pudo leer la fotografía."); }
-        if (bytes.length>5*1024*1024) throw new IllegalArgumentException("Elige una foto de hasta 5 MB.");
+        if (bytes.length>MAX_IMAGE_BYTES) throw new org.springframework.web.multipart.MaxUploadSizeExceededException(MAX_IMAGE_BYTES);
         String mime=detectType(bytes);
         if (!mime.equalsIgnoreCase(file.getContentType())) throw new IllegalArgumentException("El tipo de fotografía no coincide con su contenido.");
         String key="kuska/"+kind+"/"+hash(parentId.getBytes(StandardCharsets.UTF_8))+"/"+hash(imageId.getBytes(StandardCharsets.UTF_8))+"/"+hash(bytes);

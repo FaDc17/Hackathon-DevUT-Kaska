@@ -6,10 +6,12 @@ export function AllPosts({
   posts,
   openPost,
   back,
+  more, loading, loadMore,
 }: {
   posts: Post[];
   openPost: (id: string | number) => void;
   back: () => void;
+  more?: boolean; loading?: boolean; loadMore?: () => void;
 }) {
   return (
     <section className="page">
@@ -27,6 +29,7 @@ export function AllPosts({
           <EmptyState text="Todavía no hay publicaciones comunitarias." />
         )}
       </div>
+      {more && <button className="show-all-button" disabled={loading} onClick={loadMore}>{loading ? "Cargando…" : "Cargar más"}</button>}
     </section>
   );
 }

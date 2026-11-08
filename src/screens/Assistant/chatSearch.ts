@@ -1,7 +1,7 @@
 import type { Service, Post } from "../../types";
 import { listServices } from "../../database/repositories/services";
 import { listPosts } from "../../database/repositories/posts";
-import { wasRemoteReadFresh } from "../../services/remoteRead";
+import { wasRemoteReadOnline } from "../../services/remoteRead";
 import { consultCloud, conversationalCloudText } from "./chatCloud";
 import {
   buscarServiciosInterpretados,
@@ -74,14 +74,17 @@ export async function searchChat(
   try {
     const reads = await Promise.race([
       Promise.allSettled([
-        Promise.resolve().then(() => consultCloud(query, district, signal)),
+        Promise.resolve().then(() => {
+          if (typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("offline");
+          return consultCloud(query, district, signal);
+        }),
         Promise.resolve().then(async () => ({
           values: await listServices(),
-          fresh: wasRemoteReadFresh("/api/servicios"),
+          fresh: wasRemoteReadOnline("/api/servicios"),
         })),
         Promise.resolve().then(async () => ({
           values: await listPosts(),
-          fresh: wasRemoteReadFresh("/api/publicaciones"),
+          fresh: wasRemoteReadOnline("/api/publicaciones"),
         })),
       ]),
       aborted,

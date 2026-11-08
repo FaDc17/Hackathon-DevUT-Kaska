@@ -2720,9 +2720,26 @@ legend {
 }
 .modal-actions {
   display: grid;
-  grid-template-columns: 1fr 1.4fr;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
   gap: 9px;
   margin-top: 8px;
+}
+.modal-actions > button {
+  min-width: 0;
+  height: auto;
+  min-height: 44px;
+  margin: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.detail-content > .secondary-button {
+  width: 100%;
+  margin: 8px 0;
+  white-space: normal;
 }
 .emergency-label {
   display: flex;
@@ -3030,3 +3047,9 @@ legend {
   font-size: 11px;
   color: var(--slate);
 }
+
+.refresh-controls { display: flex; align-items: center; gap: 8px; padding: 4px 18px; color: var(--muted); font-size: 11px; }
+.refresh-controls .text-button { margin: 0; }
+.map-point-options { display: grid; gap: 8px; min-width: 180px; max-height: 240px; overflow-y: auto; }
+.map-point-options button { display: grid; gap: 3px; text-align: left; border: 1px solid #d0ddd9; border-radius: 9px; padding: 9px; background: white; color: var(--ink); cursor: pointer; }
+.map-point-options small { color: var(--teal-dark); }

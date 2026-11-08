@@ -4,6 +4,8 @@ import { EmptyState } from "../Home/EmptyState";
 import type { Service } from "../../types";
 import { getServiceCategories, type ServiceCategory } from "../../services/catalogs";
 import { getServiceCategoryIcon } from "../../utils/services";
+import { prioritizeDistrict, sameDistrict } from "../../utils/geography";
+import type { User } from "../../types";
 
 export function Services({
   services,
@@ -13,6 +15,7 @@ export function Services({
   openModal,
   showAll,
   back,
+  user,
 }: {
   services: Service[];
   category: string;
@@ -21,6 +24,7 @@ export function Services({
   openModal: () => void;
   showAll: () => void;
   back: () => void;
+  user: User;
 }) {
   const [more, setMore] = useState(false);
   const [query, setQuery] = useState("");
@@ -109,9 +113,9 @@ export function Services({
       </div>
       <div className="card-list">
         {filtered.length ? (
-          filtered
+          prioritizeDistrict(filtered, user)
             .slice(0, 3)
-            .map((s) => <ServiceCard key={s.id} service={s} onClick={() => openService(s.id)} />)
+            .map((s) => <div key={s.id}><small className="range-help">{sameDistrict(s, user) ? "Tu distrito" : "Otro distrito o ubicación sin especificar"}</small><ServiceCard service={s} onClick={() => openService(s.id)} /></div>)
         ) : (
           <EmptyState text="Aún no hay servicios en esta categoría." />
         )}

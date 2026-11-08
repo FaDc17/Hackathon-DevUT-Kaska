@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Icon, Logo } from "../../components/common/CommonComponents";
 import type { Screen } from "../../types";
 import { GeographicFields } from "./GeographicFields";
 import type { District } from "../../services/catalogs";
+import { normalizePhone, passwordError, PASSWORD_HINT } from "../../utils/registration";
+import { readRegistrationDraft, saveRegistrationDraft, clearRegistrationDraft } from "../../services/registrationDraft";
 
 type RegistrationForm = {
   username: string;
   password: string;
+  confirmPassword: string;
   address: string;
   phone: string;
   district: string;
@@ -26,6 +29,7 @@ export function RegisterScreen({
   const [values, setValues] = useState({
     name: "",
     password: "",
+    confirmPassword: "",
     address: "",
     phone: "",
     district: "",
@@ -34,6 +38,30 @@ export function RegisterScreen({
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [selectedDistrict, setSelectedDistrict] = useState<District>();
+  const [draftDistrictId, setDraftDistrictId] = useState<number>();
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftMessage, setDraftMessage] = useState("");
+  useEffect(() => {
+    let active = true;
+    void readRegistrationDraft().then((draft) => {
+      if (draft && active) {
+        setValues((current) => ({ ...current, name: draft.name, phone: draft.phone, address: draft.address }));
+        setDraftDistrictId(draft.districtId);
+        setDraftMessage("Borrador pendiente. Introduce nuevamente tu contraseña y pulsa Crear mi cuenta cuando tengas conexión.");
+      }
+    }).catch(() => { if (active) setDraftMessage("No pudimos leer el borrador protegido."); })
+      .finally(() => { if (active) setDraftReady(true); });
+    return () => { active = false; };
+  }, []);
+  const saveDraft = async () => {
+    setLoading(true);
+    try {
+      await saveRegistrationDraft({ name: values.name, phone: values.phone, address: values.address, districtId: selectedDistrict?.id });
+      setValues((current) => ({ ...current, password: "", confirmPassword: "" }));
+      setDraftMessage("Borrador guardado sin contraseña. Tu cuenta todavía no está registrada. En el navegador se conserva solo mientras la aplicación esté abierta.");
+    } catch { setDraftMessage("No se pudo guardar el borrador. Tus datos permanecen en el formulario."); }
+    finally { setLoading(false); }
+  };
   const validateField = (field: keyof typeof values, value: string) => {
     const clean = value.trim();
     if (field === "name") {
@@ -44,19 +72,14 @@ export function RegisterScreen({
         return "Usa solamente letras, números y guion bajo";
     }
     if (field === "password") {
-      if (!clean) return "Ingresa una contraseña";
-      if (value.length < 8) return "La contraseña debe tener al menos 8 caracteres";
-      if (value.length > 72) return "La contraseña puede tener hasta 72 caracteres";
-      if (!/[A-Za-zÁÉÍÓÚáéíóúÑñ]/.test(value) || !/\d/.test(value))
-        return "Incluye al menos una letra y un número";
+      return passwordError(value);
     }
+    if (field === "confirmPassword" && value !== values.password) return "Las contraseñas no coinciden";
     if (field === "address" && clean.length < 5) return "Ingresa tu dirección";
     if (field === "address" && clean.length > 300)
       return "La dirección puede tener hasta 300 caracteres";
     if (field === "phone") {
-      if (!value) return "Ingresa tu número de celular";
-      if (value.length !== 9) return "El celular debe tener 9 dígitos";
-      if (!/^9\d{8}$/.test(value)) return "Ingresa un número celular peruano válido";
+      try { normalizePhone(value); } catch (error) { return (error as Error).message; }
     }
     if (field === "district" && !value) return "Selecciona tu distrito";
     return "";
@@ -70,6 +93,8 @@ export function RegisterScreen({
     setErrors((current) => ({ ...current, [field]: validateField(field, values[field]) }));
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (loading || !draftReady) return;
+    if (!navigator.onLine) { setErrors({ form: "No hay conexión. Guarda un borrador y envíalo cuando vuelva Internet." }); return; }
     const nextErrors = Object.fromEntries(
       (Object.keys(values) as (keyof typeof values)[])
         .map((field) => [field, validateField(field, values[field])])
@@ -82,12 +107,14 @@ export function RegisterScreen({
       await onRegister({
         username: values.name.trim(),
         password: values.password,
+        confirmPassword: values.confirmPassword,
         address: values.address.trim(),
-        phone: values.phone,
+        phone: normalizePhone(values.phone),
         district: values.district,
         districtId: selectedDistrict.id,
       });
       notify("Cuenta creada. ¡Bienvenida a Kuska!");
+      await clearRegistrationDraft().catch(() => undefined);
     } catch (reason) {
       setErrors((current) => ({
         ...current,
@@ -144,6 +171,15 @@ export function RegisterScreen({
             </button>
           </div>
           {errors.password && <span className="field-error">{errors.password}</span>}
+          <small>{PASSWORD_HINT}</small>
+        </label>
+        <label>
+          Confirmar contraseña *
+          <input type={showPassword ? "text" : "password"} autoComplete="new-password"
+            value={values.confirmPassword} maxLength={72}
+            onChange={(event) => update("confirmPassword", event.target.value)}
+            onBlur={() => blur("confirmPassword")} />
+          {errors.confirmPassword && <span className="field-error">{errors.confirmPassword}</span>}
         </label>
         <label>
           Dirección privada *
@@ -162,21 +198,26 @@ export function RegisterScreen({
           <input
             className={errors.phone ? "invalid" : ""}
             value={values.phone}
-            onChange={(event) => update("phone", event.target.value.replace(/\D/g, "").slice(0, 9))}
+            onChange={(event) => update("phone", event.target.value)}
             onBlur={() => blur("phone")}
-            inputMode="numeric"
-            placeholder="9XX XXX XXX"
+            type="tel"
+            inputMode="tel"
+            maxLength={24}
+            placeholder="987654321 o +51987654321"
           />
           {errors.phone && <span className="field-error">{errors.phone}</span>}
         </label>
-        <GeographicFields
+        {draftReady && <GeographicFields
+          districtId={draftDistrictId}
           onChange={(district) => {
             setSelectedDistrict(district);
             update("district", district?.nombre || "");
           }}
-        />
+        />}
         {errors.district && <span className="field-error">{errors.district}</span>}
-        <button className="primary-button" disabled={loading}>
+        {draftMessage && <p className="verification-note" role="status">{draftMessage}</p>}
+        <button type="button" className="secondary-button" disabled={loading || !draftReady} onClick={() => void saveDraft()}>Guardar borrador sin contraseña</button>
+        <button className="primary-button" disabled={loading || !draftReady}>
           {loading ? "Creando cuenta…" : "Crear mi cuenta"}
         </button>
       </form>

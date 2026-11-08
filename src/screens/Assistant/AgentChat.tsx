@@ -19,6 +19,7 @@ type AgentChatProps = {
   openService: (id: Service["id"]) => void;
   openProfile: (ownerId: string | undefined, ownerName: string) => void;
   openPost: (id: Post["id"]) => void;
+  onCatalogLoaded: (services: Service[], posts: Post[]) => void;
 };
 
 function currentTime(): string {
@@ -53,6 +54,7 @@ export function AgentChat({
   openService,
   openProfile,
   openPost,
+  onCatalogLoaded,
 }: AgentChatProps) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
@@ -297,7 +299,7 @@ export function AgentChat({
         "local",
         prefix,
       );
-    if (!navigator.onLine || plan.preferLocal || !district.trim()) {
+    if (plan.preferLocal || !district.trim()) {
       local(
         !navigator.onLine
           ? "Estás sin conexión. "
@@ -330,6 +332,7 @@ export function AgentChat({
       );
       if (!current()) return;
       catalogs.current = { services: result.allServices, posts: result.allPosts };
+      onCatalogLoaded(result.allServices, result.allPosts);
       if (result.conversation) {
         append({ sender: "agent", text: result.conversation, modo: result.mode });
       } else {

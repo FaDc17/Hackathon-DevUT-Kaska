@@ -62,11 +62,11 @@ class AuthServiceTests {
 		when(usuarios.save(any(Usuario.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		UserDtos.AuthResponse response = authService.register(new UserDtos.RegisterRequest(
-				"kuska_user", "secure123", "987654321", "Av. Comunidad 123", 12, "Vecino"));
+				"kuska_user", "Secure123!", "987654321", "Av. Comunidad 123", 12, "Vecino"));
 
 		ArgumentCaptor<Usuario> saved = ArgumentCaptor.forClass(Usuario.class);
 		verify(usuarios).save(saved.capture());
-		assertTrue(passwordEncoder.matches("secure123", saved.getValue().getContrasenaHash()));
+		assertTrue(passwordEncoder.matches("Secure123!", saved.getValue().getContrasenaHash()));
 		assertFalse(response.accessToken().isBlank());
 		assertEquals("kuska_user", response.user().username());
 		assertFalse(response.user().toString().contains(saved.getValue().getContrasenaHash()));
@@ -78,7 +78,7 @@ class AuthServiceTests {
 
 		assertThrows(DuplicateUserException.class, () -> authService.register(
 				new UserDtos.RegisterRequest(
-						"kuska_user", "secure123", "987654321", "Av. Comunidad 123", 12, null)));
+						"kuska_user", "Secure123!", "987654321", "Av. Comunidad 123", 12, null)));
 		verify(distritos, never()).findById(any());
 	}
 
@@ -87,7 +87,7 @@ class AuthServiceTests {
 		Usuario user = mock(Usuario.class);
 		when(usuarios.findByNombreUsuarioIgnoreCaseAndEstadoTrueAndEliminadoFalse("kuska_user"))
 				.thenReturn(Optional.of(user));
-		when(user.getContrasenaHash()).thenReturn(passwordEncoder.encode("secure123"));
+		when(user.getContrasenaHash()).thenReturn(passwordEncoder.encode("Secure123!"));
 
 		BadCredentialsException error = assertThrows(BadCredentialsException.class,
 				() -> authService.login(new UserDtos.LoginRequest("kuska_user", "wrongpass1")));
@@ -101,7 +101,7 @@ class AuthServiceTests {
 		Departamento departamento = mock(Departamento.class);
 		when(usuarios.findByNombreUsuarioIgnoreCaseAndEstadoTrueAndEliminadoFalse("kuska_user"))
 				.thenReturn(Optional.of(user));
-		when(user.getContrasenaHash()).thenReturn(passwordEncoder.encode("secure123"));
+		when(user.getContrasenaHash()).thenReturn(passwordEncoder.encode("Secure123!"));
 		when(user.getId()).thenReturn("user-123");
 		when(user.getNombreUsuario()).thenReturn("kuska_user");
 		when(user.getDistrito()).thenReturn(distrito);
@@ -113,7 +113,7 @@ class AuthServiceTests {
 		when(departamento.getNombre()).thenReturn("Lima");
 
 		UserDtos.AuthResponse response = authService.login(
-				new UserDtos.LoginRequest("kuska_user", "secure123"));
+				new UserDtos.LoginRequest("kuska_user", "Secure123!"));
 
 		assertEquals(900, response.expiresIn());
 		assertEquals("user-123", jwtService.parse(response.accessToken()).id());
@@ -124,11 +124,11 @@ class AuthServiceTests {
 		Usuario user = new Usuario();
 		user.setId("user-123");
 		user.setEstado(true);
-		user.setContrasenaHash(passwordEncoder.encode("secure123"));
+		user.setContrasenaHash(passwordEncoder.encode("Secure123!"));
 		when(usuarios.findByIdAndEstadoTrueAndEliminadoFalse("user-123"))
 				.thenReturn(Optional.of(user));
 
-		authService.deleteAccount("user-123", new UserDtos.AccountDeletionRequest("secure123", "ELIMINAR"));
+		authService.deleteAccount("user-123", new UserDtos.AccountDeletionRequest("Secure123!", "ELIMINAR"));
 
 		assertFalse(user.isEstado());
 		assertTrue(user.isEliminado());
@@ -147,7 +147,7 @@ class AuthServiceTests {
 	void deletionRejectsWrongPasswordWithoutChangingData() {
 		Usuario user = new Usuario();
 		user.setEstado(true);
-		user.setContrasenaHash(passwordEncoder.encode("secure123"));
+		user.setContrasenaHash(passwordEncoder.encode("Secure123!"));
 		when(usuarios.findByIdAndEstadoTrueAndEliminadoFalse("user-123"))
 				.thenReturn(Optional.of(user));
 
@@ -165,7 +165,7 @@ class AuthServiceTests {
 		when(usuarios.findByIdAndEstadoTrueAndEliminadoFalse("user-123"))
 				.thenReturn(Optional.of(user));
 		assertThrows(IllegalArgumentException.class, () -> authService.deleteAccount("user-123",
-				new UserDtos.AccountDeletionRequest("secure123", "SI")));
+				new UserDtos.AccountDeletionRequest("Secure123!", "SI")));
 		verify(usuarios, never()).saveAndFlush(any());
 	}
 }

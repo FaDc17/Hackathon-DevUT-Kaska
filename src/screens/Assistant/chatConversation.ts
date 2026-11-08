@@ -97,7 +97,7 @@ export function planConversation(
   if (/^(?:reiniciar|borrar (?:el )?chat|nueva conversacion|empezar de nuevo)$/.test(q))
     return { kind: "reset" };
   if (
-    /^(?:hola|holi|holis|hey|buenas|buenos dias|buenas tardes|buenas noches)(?: kuska| kussy| agente)?$/.test(
+    /^(?:hola|holi|holis|hey|buenas|buenos dias|buenas tardes|buenas noches)(?: kuska| kussy| agente| hijit[oa]| hij[oa]| amig[oa]| amiguit[oa]| querido| querida)?$/.test(
       q,
     )
   ) {
@@ -129,7 +129,7 @@ export function planConversation(
       kind: "reply",
       text: "Soy el Agente Kuska, tu asistente para encontrar servicios y apoyo comunitario. Uso la IA disponible para interpretar consultas y también puedo ayudarte con búsquedas locales sin internet.",
     };
-  if (/^(?:ayuda|que (?:puedo|puedes) hacer|opciones|como usar kuska|tutorial)$/.test(q))
+  if (/^(?:ayuda|necesito ayuda|ayudame|que (?:puedo|puedes) hacer|opciones|como usar kuska|tutorial)$/.test(query))
     return {
       kind: "reply",
       text: HELP,
@@ -163,12 +163,18 @@ export function planConversation(
     };
 
   // App commands and help are independent of an unfinished provider selection.
-  if (/como (?:puedo )?(?:publicar|ofrecer)|como publico|ofrecer un servicio/.test(query))
+  if (/como (?:puedo )?(?:publicar|ofrecer)|como publico|ofrecer un servicio|quiero publicar (?:un |mi )?servicio/.test(query))
     return {
       kind: "reply",
       text: "Para ofrecer un servicio, abre Servicios y pulsa la opción para publicar. Para compartir una necesidad o donación, entra a Comunidad.",
       acciones: ["services", "solidarity"],
     };
+  if (/(?:como|donde|quiero).*(?:editar|edito|eliminar|elimino).*(?:publicacion|servicio)/.test(query))
+    return { kind: "reply", text: "Abre Mi perfil y busca tu servicio o publicación. Entra al detalle y pulsa Editar o Eliminar. Al editar, confirma con Guardar cambios.", acciones: ["profile"] };
+  if (/donde (?:encuentro|estan|veo)|como (?:encuentro|busco)/.test(query)) {
+    if (/servicios?/.test(query)) return { kind: "reply", text: "En Servicios puedes buscar por nombre y categoría. Pulsa Mostrar todos para ver más opciones.", acciones: ["services"] };
+    if (/comunidad|publicaciones?/.test(query)) return { kind: "reply", text: "En Comunidad puedes consultar necesidades y solidaridad de tus vecinos. Pulsa Crear publicación para compartir la tuya.", acciones: ["solidarity"] };
+  }
   if (
     /^(?:como (?:consulto|edito)|quiero (?:ver|editar)|ver|abrir)?\s*mi perfil$|^mi cuenta$/.test(
       query,
@@ -409,7 +415,7 @@ export function planConversation(
       postIds: [],
       pending: contactRequested ? "contact" : followup ? context?.pending : undefined,
     },
-    preferLocal: Boolean(followup && context),
+    preferLocal: Boolean(followup && context && !(category && /\b(?:busco|buscar|necesito|recomienda|recomiendame)\b/.test(query))),
   };
 }
 

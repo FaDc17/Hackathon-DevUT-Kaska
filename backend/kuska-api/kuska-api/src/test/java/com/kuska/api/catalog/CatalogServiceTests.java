@@ -91,4 +91,16 @@ class CatalogServiceTests {
 		assertEquals(List.of(new CatalogDtos.ProvinciaDto(1, "Lima", "Lima"),
 				new CatalogDtos.ProvinciaDto(2, "Callao", "Callao")), service.provincias(null));
 	}
+
+	@Test
+	void servesSpecialDistrictWithItsPersistentDatabaseId() {
+		Distrito special = mock(Distrito.class);
+		CatalogDtos.DistritoDto expected = new CatalogDtos.DistritoDto(
+				701, 99, "Departamento incompleto", "Sin especificar", "Sin especificar");
+		when(departments.existsById(99)).thenReturn(true);
+		when(districts.findByDepartamentoIdOrderByNombreAsc(99)).thenReturn(List.of(special));
+		when(mapper.toDto(special)).thenReturn(expected);
+
+		assertEquals(List.of(expected), service.distritos(99));
+	}
 }

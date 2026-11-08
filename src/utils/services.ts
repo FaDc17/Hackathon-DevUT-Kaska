@@ -19,10 +19,10 @@ export function getServiceCategoryIcon(category: string) {
   if (/mascot|perro|gato|animal|veterin/.test(normalized)) return "paw";
   if (/transport|taxi|mudanza|vehiculo/.test(normalized)) return "car";
   if (/hogar|limpieza|costura/.test(normalized)) return "home";
-  if (/jardin|paisaj|plant/.test(normalized)) return "tools";
-  if (/belleza|peluquer|estetic/.test(normalized)) return "user";
-  if (/tecnolog|comput|informat|celular/.test(normalized)) return "robot";
-  if (/evento|celebr|fiesta/.test(normalized)) return "camera";
+  if (/jardin|paisaj|plant/.test(normalized)) return "leaf";
+  if (/belleza|peluquer|estetic/.test(normalized)) return "scissors";
+  if (/tecnolog|comput|informat|celular/.test(normalized)) return "computer";
+  if (/evento|celebr|fiesta/.test(normalized)) return "calendar";
 
   return "grid";
 }

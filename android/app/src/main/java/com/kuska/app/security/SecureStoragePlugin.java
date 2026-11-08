@@ -28,6 +28,8 @@ public class SecureStoragePlugin extends Plugin {
 
 	@PluginMethod
 	public void set(PluginCall call) {
+		String key = entryKey(call);
+		if (key == null) return;
 		String value = call.getString("value");
 		if (value == null) {
 			call.reject("El valor de sesión es obligatorio.");
@@ -40,9 +42,9 @@ public class SecureStoragePlugin extends Plugin {
 			ByteBuffer payload = ByteBuffer.allocate(cipher.getIV().length + encrypted.length);
 			payload.put(cipher.getIV());
 			payload.put(encrypted);
-			getPreferences().edit()
-					.putString(SESSION_KEY, Base64.encodeToString(payload.array(), Base64.NO_WRAP))
-					.apply();
+			if (!getPreferences().edit()
+					.putString(key, Base64.encodeToString(payload.array(), Base64.NO_WRAP)).commit())
+				throw new IllegalStateException("Secure storage commit failed");
 			call.resolve();
 		} catch (Exception exception) {
 			call.reject("No se pudo guardar la sesión en el almacenamiento seguro.");
@@ -51,7 +53,9 @@ public class SecureStoragePlugin extends Plugin {
 
 	@PluginMethod
 	public void get(PluginCall call) {
-		String encoded = getPreferences().getString(SESSION_KEY, null);
+		String key = entryKey(call);
+		if (key == null) return;
+		String encoded = getPreferences().getString(key, null);
 		if (encoded == null) {
 			JSObject result = new JSObject();
 			result.put("value", JSObject.NULL);
@@ -79,12 +83,59 @@ public class SecureStoragePlugin extends Plugin {
 
 	@PluginMethod
 	public void remove(PluginCall call) {
-		getPreferences().edit().remove(SESSION_KEY).apply();
+		String key = entryKey(call);
+		if (key == null) return;
+		if (!getPreferences().edit().remove(key).commit()) {
+			call.reject("No se pudo borrar el dato protegido."); return;
+		}
 		call.resolve();
+	}
+
+	private String entryKey(PluginCall call) {
+		String key = call.getString("key", SESSION_KEY);
+		if (!key.matches("(?:session|registration-draft|profile-[A-Za-z0-9-]{1,100})")) {
+			call.reject("Clave de almacenamiento no permitida."); return null;
+		}
+		return key;
 	}
 
 	private SharedPreferences getPreferences() {
 		return getContext().getSharedPreferences(PREFERENCES, android.content.Context.MODE_PRIVATE);
+	}
+
+	@PluginMethod
+	public void seal(PluginCall call) {
+		try {
+			String value = call.getString("value");
+			String context = call.getString("context");
+			if (value == null || context == null) throw new IllegalArgumentException();
+			Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+			cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey());
+			cipher.updateAAD(context.getBytes(StandardCharsets.UTF_8));
+			byte[] encrypted = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
+			ByteBuffer payload = ByteBuffer.allocate(12 + encrypted.length);
+			payload.put(cipher.getIV()).put(encrypted);
+			JSObject result = new JSObject();
+			result.put("value", Base64.encodeToString(payload.array(), Base64.NO_WRAP));
+			call.resolve(result);
+		} catch (Exception exception) { call.reject("No se pudo proteger el dato privado."); }
+	}
+
+	@PluginMethod
+	public void unseal(PluginCall call) {
+		try {
+			String context = call.getString("context");
+			byte[] payload = Base64.decode(call.getString("value"), Base64.NO_WRAP);
+			ByteBuffer buffer = ByteBuffer.wrap(payload);
+			byte[] iv = new byte[12]; buffer.get(iv);
+			byte[] encrypted = new byte[buffer.remaining()]; buffer.get(encrypted);
+			Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+			cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), new GCMParameterSpec(GCM_TAG_BITS, iv));
+			cipher.updateAAD(context.getBytes(StandardCharsets.UTF_8));
+			JSObject result = new JSObject();
+			result.put("value", new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8));
+			call.resolve(result);
+		} catch (Exception exception) { call.reject("No se pudo abrir el dato privado protegido."); }
 	}
 
 	private SecretKey getOrCreateSecretKey() throws Exception {

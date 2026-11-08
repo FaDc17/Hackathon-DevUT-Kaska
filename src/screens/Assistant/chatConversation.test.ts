@@ -54,6 +54,12 @@ function search(text: string, previous: ConversationContext | null = null) {
 }
 
 describe("conversación del Agente Kuska", () => {
+  it.each(["Hola, hijito", "Buenos días, amiga", "Necesito ayuda", "No sé cómo publicar un servicio", "¿Dónde encuentro los servicios?", "¿Cómo edito una publicación?"])("helps with %s without returning business results", text => {
+    expect(plan(text).kind).toBe("reply");
+  });
+  it.each([["Abre mi perfil", "profile"], ["Muéstrame Comunidad", "solidarity"], ["Quiero consultar emergencias", "emergency"], ["Abre Servicios", "services"]])("uses a real screen for %s", (text, destination) => {
+    expect(plan(text)).toEqual({ kind: "navigate", destination });
+  });
   it("responde a saludos, agradecimientos y cancelaciones sin buscar ni perder los filtros", () => {
     for (const text of ["hola", "¡Hola!", "gracias", "no", "no gracias", "sí"]) {
       const response = plan(text, context);
@@ -220,6 +226,9 @@ describe("conversación del Agente Kuska", () => {
     expect(categoriaDeConsulta(response.query)).toBe("electricidad");
     expect(response.preferLocal).toBe(true);
     expect(extraerPresupuesto(response.query)).toEqual({ max: 40, estricto: true });
+  });
+  it("a new explicit service search can consult online again even with existing filters", () => {
+    expect(search("Busco un electricista en Bellavista hasta 50 soles", context).preferLocal).toBe(false);
   });
 
   it("una selección de contacto pendiente no bloquea navegación ni ayuda de la aplicación", () => {

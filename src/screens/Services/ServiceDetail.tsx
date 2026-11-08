@@ -114,7 +114,7 @@ export function ServiceDetail({
           </p>
         )}
         {service.imagePending && (
-          <p className="range-help">Fotografía guardada en este dispositivo; pendiente de subir.</p>
+          <p className="range-help" role="status">{service.imageError || "Fotografía guardada en este dispositivo; pendiente de subir."}</p>
         )}
         {canManage && (
           <div className="modal-actions">

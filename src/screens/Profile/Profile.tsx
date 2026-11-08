@@ -1,6 +1,8 @@
 import { Icon, ServiceCard, PostCard } from "../../components/common/CommonComponents";
 import { EmptyState } from "../Home/EmptyState";
 import type { Post, Service, User } from "../../types";
+import { useState } from "react";
+import { ChangePassword } from "./ChangePassword";
 
 export function Profile({
   user,
@@ -25,6 +27,7 @@ export function Profile({
   logout: () => void;
   deleteAccount: () => void;
 }) {
+  const [changingPassword, setChangingPassword] = useState(false);
   const myServices = services.filter(
     (service) => !!service.ownerId && [user.id, user.remoteId].includes(service.ownerId),
   );
@@ -123,6 +126,8 @@ export function Profile({
       <button className="logout-button" onClick={deleteAccount}>
         Eliminar mi cuenta
       </button>
+      <button className="secondary-button" onClick={() => setChangingPassword(true)}>Cambiar contraseña</button>
+      {changingPassword && <ChangePassword onClose={() => setChangingPassword(false)} />}
     </section>
   );
 }
