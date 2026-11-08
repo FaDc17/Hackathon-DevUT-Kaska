@@ -36,8 +36,24 @@ public class ContentRepository {
 	public List<ServiceView> listServices() {
 		return jdbc.query(serviceSql() + """
 				WHERE s.Estado = 1 AND s.Eliminado = 0
-				ORDER BY s.FechaPublicacion DESC
+				ORDER BY s.FechaPublicacion DESC, s.IdServicio
 				""", SERVICE_BASE_MAPPER).stream().map(this::attachServiceDetails).toList();
+	}
+
+	public List<ServiceView> listServicesPage(int page, int size, Integer districtId) {
+		return jdbc.query(serviceSql() + """
+			WHERE s.Estado=1 AND s.Eliminado=0
+			ORDER BY CASE WHEN u.IdDistrito=? AND d.NombreDistrito<>N'Sin especificar' THEN 0 ELSE 1 END,
+			s.FechaPublicacion DESC,s.IdServicio OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+			""", SERVICE_BASE_MAPPER, districtId, page*size, size).stream().map(this::attachServiceDetails).toList();
+	}
+
+	public List<PostView> listPostsPage(int page, int size, Integer districtId) {
+		return jdbc.query(postSql() + """
+			WHERE p.Estado=1 AND p.Eliminado=0
+			ORDER BY CASE WHEN u.IdDistrito=? AND d.NombreDistrito<>N'Sin especificar' THEN 0 ELSE 1 END,
+			p.FechaPublicacion DESC,p.IdPublicacion OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+			""", (rs,row)->postView(rs), districtId, page*size, size).stream().map(this::attachPostDetails).toList();
 	}
 
 	public ServiceView service(String id) {
@@ -227,7 +243,7 @@ public class ContentRepository {
 	public List<PostView> listPosts() {
 		List<PostView> posts = jdbc.query(postSql() + """
 				WHERE p.Estado = 1 AND p.Eliminado = 0
-				ORDER BY p.FechaPublicacion DESC
+				ORDER BY p.FechaPublicacion DESC, p.IdPublicacion
 				""", (rs, row) -> postView(rs));
 		return posts.stream().map(this::attachPostDetails).toList();
 	}

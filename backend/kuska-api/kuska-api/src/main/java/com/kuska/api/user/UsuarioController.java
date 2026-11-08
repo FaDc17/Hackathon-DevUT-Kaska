@@ -44,4 +44,11 @@ public class UsuarioController {
 		authService.deleteAccount(user.id(), request);
 		return ResponseEntity.noContent().build();
 	}
+
+	@PutMapping("/password")
+	public ResponseEntity<Void> changePassword(@AuthenticationPrincipal AuthenticatedUser user,
+			@Valid @RequestBody UserDtos.PasswordChangeRequest request) {
+		authService.changePassword(user.id(), request);
+		return ResponseEntity.noContent().build();
+	}
 }

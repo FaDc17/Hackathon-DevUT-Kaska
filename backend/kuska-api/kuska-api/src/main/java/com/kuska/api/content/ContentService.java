@@ -62,6 +62,20 @@ public class ContentService {
 	}
 
 	@Transactional(readOnly = true)
+	public List<ServiceView> servicesPage(int page, int size, Integer districtId) {
+		validatePage(page,size);
+		return content.listServicesPage(page,size,districtId);
+	}
+	@Transactional(readOnly = true)
+	public List<PostView> postsPage(int page, int size, Integer districtId) {
+		validatePage(page,size);
+		return content.listPostsPage(page,size,districtId);
+	}
+	private void validatePage(int page, int size) {
+		if(page<0 || page>100000 || size<1 || size>50) throw new IllegalArgumentException("Página inválida: tamaño entre 1 y 50.");
+	}
+
+	@Transactional(readOnly = true)
 	public ServiceView service(String id) {
 		return content.service(requireId(id));
 	}

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Modal } from "../../components/common/CommonComponents";
 import type { User } from "../../types";
 import { GeographicFields } from "../Register/GeographicFields";
+import { normalizePhone } from "../../utils/registration";
 
 export function EditProfile({
   user,
@@ -31,7 +32,7 @@ export function EditProfile({
       await onSave({
         ...user,
         name: String(fd.get("name")).trim(),
-        phone: String(fd.get("phone")),
+        phone: normalizePhone(String(fd.get("phone"))),
         address: String(fd.get("address")),
         district: selectedDistrict.nombre,
         districtId: selectedDistrict.id,
@@ -67,9 +68,8 @@ export function EditProfile({
             name="phone"
             defaultValue={user.phone}
             type="tel"
-            inputMode="numeric"
-            pattern="9[0-9]{8}"
-            maxLength={9}
+            inputMode="tel"
+            maxLength={24}
             required
           />
         </label>

@@ -17,6 +17,7 @@ import {
   removePersistentImage,
   saveBrowserImage,
 } from "./images";
+import * as compression from "./imageCompression";
 
 const imageData = "data:image/png;base64,iVBORw0KGgo=";
 beforeEach(() => {
@@ -44,6 +45,28 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("image persistence contracts (native bridge and browser storage simulated)", () => {
+  it("persists the compressed bytes instead of the multi-megabyte original", async () => {
+    const compressed = new Blob([new Uint8Array(100)], { type: "image/jpeg" });
+    const prepare = vi.spyOn(compression, "compressImage").mockResolvedValue(compressed);
+    const read = vi.fn();
+    vi.stubGlobal("FileReader", class {
+      result = imageData;
+      onload?: () => void;
+      readAsDataURL(blob: Blob) { read(blob); this.onload?.(); }
+    });
+    try {
+      await persistSelectedImage(new File([new Uint8Array(2 * 1024 * 1024)], "phone.jpg", { type: "image/jpeg" }));
+      expect(read).toHaveBeenCalledWith(compressed);
+    } finally { prepare.mockRestore(); }
+  });
+  it("reuses the same persistent file when a publication submission is retried", async () => {
+    bridge.native = true;
+    bridge.save.mockResolvedValue({ uri: "file:///private/retry.png" });
+    const file = { type: "image/png", size: 8 } as File;
+    const first = await persistSelectedImage(file);
+    expect(await persistSelectedImage(file)).toBe(first);
+    expect(bridge.save).toHaveBeenCalledTimes(1);
+  });
   it("keeps a selected browser file as a Data URI and recovers it after module reload", async () => {
     const value = await persistSelectedImage(
       { type: "image/png", size: 8 } as File,

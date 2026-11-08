@@ -57,9 +57,16 @@ class BlobImageServiceTests {
     }
     @Test void rejectsOversizeBeforeReadingTheFile() throws Exception {
         var huge=mock(org.springframework.web.multipart.MultipartFile.class);
-        when(huge.getSize()).thenReturn(6L*1024*1024);
-        assertThrows(IllegalArgumentException.class,()->service.upload("owner","servicio","service-original","image-original",huge));
+        when(huge.getSize()).thenReturn(11L*1024*1024);
+        assertThrows(org.springframework.web.multipart.MaxUploadSizeExceededException.class,()->service.upload("owner","servicio","service-original","image-original",huge));
         verify(huge,never()).getBytes(); verifyNoInteractions(store,content);
+    }
+    @Test void acceptsImagesLargerThanTheOldOneMegabyteLimit() {
+        byte[] bytes=java.util.Arrays.copyOf(png,2*1024*1024);
+        when(store.upload(anyString(),any(),eq("image/png"))).thenReturn("https://blobkuska.blob.core.windows.net/imagenes/kuska/large");
+        var result=service.upload("owner","servicio","service-original","image-original",new MockMultipartFile("archivo","foto.png","image/png",bytes));
+        assertTrue(result.url().endsWith("/large"));
+        verify(content).addServiceImage(eq("owner"),eq("service-original"),any());
     }
     @Test void storageFailureNeverCreatesAFalseSqlReference() {
         when(store.upload(anyString(),any(),anyString())).thenThrow(new BlobUnavailableException());

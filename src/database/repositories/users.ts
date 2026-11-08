@@ -4,6 +4,23 @@ import type { SQLiteDBConnection } from "@capacitor-community/sqlite";
 import type { User } from "../../types";
 import type { PublicUser, ProfileUpdateRequest } from "../../services/auth";
 import { commitPending, requireOwner } from "./contentShared";
+import { getSecureSession } from "../../services/secureSession";
+import { getBrowserProfile, setBrowserProfile } from "../../services/privateProfile";
+import { protectPrivate, openPrivate, isProtected } from "../../services/privateStorage";
+
+async function visibleProfile(user: User): Promise<User> {
+  const session = await getSecureSession();
+  if (!session || ![user.id, user.remoteId].includes(session.userId)) return { ...user, phone: "", address: "" };
+  if (!Capacitor.isNativePlatform()) return user;
+  const context = `address:${user.id}`;
+  const address = await openPrivate(user.address, context);
+  if (!isProtected(user.address) && address) {
+    const encrypted = await protectPrivate(address, context);
+    const db = await getDatabase();
+    await db.run("UPDATE Usuarios SET DireccionPrivada=? WHERE IdUsuario=? AND DireccionPrivada=?;", [encrypted, user.id, user.address]);
+  }
+  return { ...user, address };
+}
 
 type UserRow = {
   IdUsuario: string;
@@ -77,8 +94,8 @@ const USER_SELECT = `
 export async function listUsers(): Promise<User[]> {
   if (!Capacitor.isNativePlatform()) {
     try {
-      const stored = localStorage.getItem("kuska-cached-user");
-      return stored ? [JSON.parse(stored) as User] : [];
+      const stored = getBrowserProfile();
+      return stored ? [await visibleProfile(stored)] : [];
     } catch {
       return [];
     }
@@ -89,7 +106,7 @@ export async function listUsers(): Promise<User[]> {
     WHERE u.Eliminado = 0
     ORDER BY u.NombreUsuario;
   `);
-  return (result.values ?? []).map((row) => toUser(row as UserRow));
+  return Promise.all((result.values ?? []).map((row) => visibleProfile(toUser(row as UserRow))));
 }
 
 export async function getUserById(id: string): Promise<User | null> {
@@ -100,7 +117,7 @@ export async function getUserById(id: string): Promise<User | null> {
     `${USER_SELECT} WHERE (u.IdUsuario = ? OR u.RemoteId = ?) AND u.Eliminado = 0 LIMIT 1;`,
     [id, id],
   );
-  return result.values?.[0] ? toUser(result.values[0] as UserRow) : null;
+  return result.values?.[0] ? visibleProfile(toUser(result.values[0] as UserRow)) : null;
 }
 
 export async function cacheRemoteUser(user: PublicUser): Promise<User> {
@@ -117,7 +134,7 @@ export async function cacheRemoteUser(user: PublicUser): Promise<User> {
       about: user.about || "",
       syncStatus: "sincronizado",
     };
-    localStorage.setItem("kuska-cached-user", JSON.stringify(cached));
+    setBrowserProfile(cached);
     return cached;
   }
   const db = await getDatabase();
@@ -177,6 +194,7 @@ export async function cacheRemoteUser(user: PublicUser): Promise<User> {
     if (pending) return pending;
   }
   const existing = await db.query("SELECT 1 FROM Usuarios WHERE IdUsuario = ? LIMIT 1;", [localId]);
+  const protectedAddress = await protectPrivate(user.address, `address:${localId}`);
   if (existing.values?.length) {
     await db.run(
       `UPDATE Usuarios
@@ -184,7 +202,7 @@ export async function cacheRemoteUser(user: PublicUser): Promise<User> {
            IdDistrito = ?, DescripcionPerfil = ?, FechaActualizacion = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
            SyncEstado = 'sincronizado', Estado = 1, Eliminado = 0
        WHERE IdUsuario = ?;`,
-      [user.id, user.username, user.phone, user.address, districtId, user.about || null, localId],
+      [user.id, user.username, user.phone, protectedAddress, districtId, user.about || null, localId],
     );
   } else {
     await db.run(
@@ -192,7 +210,7 @@ export async function cacheRemoteUser(user: PublicUser): Promise<User> {
         (IdUsuario, NombreUsuario, ContrasenaHash, Celular, DireccionPrivada, IdDistrito,
          DescripcionPerfil, RemoteId, SyncEstado)
        VALUES (?, ?, '', ?, ?, ?, ?, ?, 'sincronizado');`,
-      [localId, user.username, user.phone, user.address, districtId, user.about || null, user.id],
+      [localId, user.username, user.phone, protectedAddress, districtId, user.about || null, user.id],
     );
   }
   const cached = await getUserById(user.id);
@@ -201,9 +219,9 @@ export async function cacheRemoteUser(user: PublicUser): Promise<User> {
 }
 
 export async function updateUser(user: User, pendingSync = true): Promise<void> {
-  await requireOwner(user.id);
+  const localId = await requireOwner(user.id);
   if (!Capacitor.isNativePlatform()) {
-    localStorage.setItem("kuska-cached-user", JSON.stringify(user));
+    setBrowserProfile(user);
     return;
   }
   const db = await getDatabase();
@@ -216,7 +234,7 @@ export async function updateUser(user: User, pendingSync = true): Promise<void> 
   const values = [
     user.name.trim(),
     user.phone,
-    user.address.trim(),
+    await protectPrivate(user.address.trim(), `address:${localId}`),
     districtId,
     user.about || null,
     pendingSync ? "pendiente" : "sincronizado",

@@ -1,0 +1,101 @@
+Branch: Actualizacion-del-chatBOT
+
+ M android/app/src/main/AndroidManifest.xml
+ M android/app/src/main/java/com/kuska/app/media/PersistentImagesPlugin.java
+ M android/app/src/main/java/com/kuska/app/security/SecureStoragePlugin.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/catalog/ApiExceptionHandler.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/content/ContentController.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/content/ContentRepository.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/content/ContentService.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/images/AzureBlobImageStore.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/images/BlobImageController.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/images/BlobImageService.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/security/JwtService.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/user/AuthController.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/user/AuthService.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/user/UserDtos.java
+ M backend/kuska-api/kuska-api/src/main/java/com/kuska/api/user/UsuarioController.java
+ M backend/kuska-api/kuska-api/src/main/resources/application.properties
+ M backend/kuska-api/kuska-api/src/test/java/com/kuska/api/catalog/CatalogServiceTests.java
+ M backend/kuska-api/kuska-api/src/test/java/com/kuska/api/images/BlobImageControllerTests.java
+ M backend/kuska-api/kuska-api/src/test/java/com/kuska/api/images/BlobImageServiceTests.java
+ M backend/kuska-api/kuska-api/src/test/java/com/kuska/api/security/BackendHttpSmokeTests.java
+ M backend/kuska-api/kuska-api/src/test/java/com/kuska/api/security/JwtServiceTests.java
+ M backend/kuska-api/kuska-api/src/test/java/com/kuska/api/security/SecurityEndpointsTests.java
+ M backend/kuska-api/kuska-api/src/test/java/com/kuska/api/user/AuthServiceTests.java
+ M src/App.tsx
+ M src/components/common/CommonComponents.tsx
+ M src/components/map/KuskaMap.tsx
+ M src/database/repositories/contentPersistence.test.ts
+ M src/database/repositories/contentShared.ts
+ M src/database/repositories/posts.ts
+ M src/database/repositories/services.ts
+ M src/database/repositories/syncQueue.ts
+ M src/database/repositories/users.ts
+ M src/index.css
+ M src/screens/Assistant/AgentChat.tsx
+ M src/screens/Assistant/chatConversation.test.ts
+ M src/screens/Assistant/chatConversation.ts
+ M src/screens/Assistant/chatSearch.test.ts
+ M src/screens/Assistant/chatSearch.ts
+ M src/screens/Assistant/hybridSearch.ts
+ M src/screens/Emergency/CreateEmergency.tsx
+ M src/screens/Emergency/Emergency.tsx
+ M src/screens/Map/MapScreen.tsx
+ M src/screens/Posts/AllPosts.tsx
+ M src/screens/Posts/CreatePost.tsx
+ M src/screens/Posts/PostDetail.tsx
+ M src/screens/Profile/EditProfile.tsx
+ M src/screens/Profile/Profile.tsx
+ M src/screens/RecoverPassword/RecoverScreen.tsx
+ M src/screens/Register/GeographicFields.tsx
+ M src/screens/Register/RegisterScreen.tsx
+ M src/screens/Services/AllServices.tsx
+ M src/screens/Services/CreateService.tsx
+ M src/screens/Services/ServiceDetail.tsx
+ M src/screens/Services/Services.tsx
+ M src/screens/Solidarity/Solidarity.tsx
+ M src/services/apiClient.ts
+ M src/services/auth.ts
+ M src/services/blobImages.test.ts
+ M src/services/blobImages.ts
+ M src/services/catalogs.test.ts
+ M src/services/catalogs.ts
+ M src/services/images.test.ts
+ M src/services/images.ts
+ M src/services/remoteRead.ts
+ M src/services/session.ts
+ M src/types/index.ts
+ M src/utils/geo.ts
+?? android/app/src/main/res/drawable-nodpi/
+?? android/app/src/main/res/drawable/kuska_app_icon.xml
+?? backend/kuska-api/kuska-api/src/main/java/com/kuska/api/catalog/GeocodingController.java
+?? backend/kuska-api/kuska-api/src/main/java/com/kuska/api/user/RecoveryTokens.java
+?? backend/kuska-api/kuska-api/src/main/java/com/kuska/api/user/RegistrationValidation.java
+?? docs/KUSKA_ARCHIVOS_MODIFICADOS.txt
+?? docs/KUSKA_GIT_FINAL.txt
+?? docs/KUSKA_LIMITE_FOTOGRAFIAS.md
+?? docs/KUSKA_MEJORAS.diff
+?? docs/KUSKA_MEJORAS_EXPERIENCIA.md
+?? docs/catalogos_sin_especificar_otros.azure.sql
+?? scripts/qa-experience.mjs
+?? scripts/verify-experience.mjs
+?? src/components/common/PullToRefresh.tsx
+?? src/screens/Profile/ChangePassword.tsx
+?? src/services/imageCompression.test.ts
+?? src/services/imageCompression.ts
+?? src/services/offlineSession.ts
+?? src/services/privateProfile.ts
+?? src/services/privateStorage.ts
+?? src/services/registrationDraft.ts
+?? src/services/sessionRenewal.test.ts
+?? src/services/sessionTokens.ts
+?? src/utils/categoryIcons.ts
+?? src/utils/experience.test.ts
+?? src/utils/geo.test.ts
+?? src/utils/geography.ts
+?? src/utils/mapMarkers.ts
+?? src/utils/pagination.test.ts
+?? src/utils/pagination.ts
+?? src/utils/pullRefresh.ts
+?? src/utils/registration.ts

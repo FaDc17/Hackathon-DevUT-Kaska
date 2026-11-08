@@ -17,7 +17,15 @@ const state = vi.hoisted(() => ({
 vi.mock("../connection", () => ({ getDatabase: async () => state.db }));
 vi.mock("@capacitor/core", () => ({
   Capacitor: { isNativePlatform: () => state.native, convertFileSrc: (s: string) => s },
-  registerPlugin: () => ({}),
+  // Simulates the native bridge; Android Keystore must also be tested on a device.
+  registerPlugin: () => ({
+    seal: async ({ value, context }: { value: string; context: string }) => ({ value: Buffer.from(JSON.stringify({ value, context })).toString("base64") }),
+    unseal: async ({ value, context }: { value: string; context: string }) => {
+      const decoded = JSON.parse(Buffer.from(value, "base64").toString());
+      if (decoded.context !== context) throw new Error("Wrong context");
+      return { value: decoded.value };
+    },
+  }),
 }));
 vi.mock("../../services/secureSession", () => ({
   getSecureSession: async () => state.session,
@@ -183,6 +191,32 @@ afterEach(() => {
 });
 
 describe("SQLite content persistence and its existing synchronization queue", () => {
+  it("keeps an uploaded photo available offline when editing text without selecting a replacement", async () => {
+    await createService({ ...service(), image: "https://localhost/_capacitor_file_/keep-photo.png" });
+    sql.prepare("UPDATE ImagenesServicio SET UrlRemota=?,SyncEstado='sincronizado'").run("https://blobkuska.blob.core.windows.net/imagenes/kuska/keep-photo");
+    for (let pass = 0; pass < 2; pass++) for (const operation of await pendingSyncOperations())
+      await markSyncOperationSucceeded(operation.IdOperacion, operation.Entidad, operation.EntidadId);
+    const displayed = (await listServices())[0];
+    expect(displayed.imagePending).toBe(false);
+    expect(displayed.imageReference).toContain("/kuska/keep-photo");
+    await updateService({ ...displayed, title: "Texto editado sin nueva foto" });
+    expect(sql.prepare("SELECT RutaLocal,UrlRemota FROM ImagenesServicio").get()).toMatchObject({
+      RutaLocal: "https://localhost/_capacitor_file_/keep-photo.png",
+      UrlRemota: "https://blobkuska.blob.core.windows.net/imagenes/kuska/keep-photo",
+    });
+    const queue = await pendingSyncOperations();
+    expect(JSON.parse(queue.find(row => row.Entidad === "Servicios" && row.Operacion === "actualizar")?.Payload || "{}").images[0].url).toContain("/kuska/keep-photo");
+  });
+  it("does not let an old local photo hide a newer remote image from another device", async () => {
+    await createService({ ...service(), image: "https://localhost/_capacitor_file_/old.png" });
+    sql.prepare("UPDATE Servicios SET SyncEstado='sincronizado'").run();
+    sql.prepare("UPDATE ImagenesServicio SET UrlRemota=?,SyncEstado='sincronizado'").run("https://storage.example.com/old.png");
+    online(true);
+    state.request.mockResolvedValue([{ ...remoteService(String(service().id)), images: [{ id: `img-${service().id}`, url: "https://storage.example.com/new.png" }] }]);
+    const displayed = (await listServices())[0];
+    expect(displayed.image).toBe("https://storage.example.com/new.png");
+    expect(displayed.imagePending).not.toBe(true);
+  });
   it("uploads an offline image only after the parent is acknowledged and persists a permanent URL", async () => {
     await createService({ ...service(), image: "https://localhost/_capacitor_file_/photo.png" });
     let pending = await pendingSyncOperations();
@@ -638,8 +672,8 @@ describe("SQLite content persistence and its existing synchronization queue", ()
       persistSelectedImage({ type: "image/svg+xml", size: 200 } as File),
     ).rejects.toThrow("JPG, PNG o WebP");
     await expect(
-      persistSelectedImage({ type: "image/jpeg", size: 6 * 1024 * 1024 } as File),
-    ).rejects.toThrow("hasta 5 MB");
+      persistSelectedImage({ type: "image/jpeg", size: 11 * 1024 * 1024 } as File),
+    ).rejects.toThrow("hasta 10 MB");
   });
   it("deletes a remote owned service using its legacy local owner without breaking the SQLite foreign key", async () => {
     sql

@@ -10,6 +10,7 @@ import {
 } from "../../services/remoteRead";
 import { apiRequest } from "../../services/apiClient";
 import { getSecureSession } from "../../services/secureSession";
+import { type FeedPage, validateFeedPage } from "../../services/remoteRead";
 import {
   pendingImageStatements,
   resolveImages,
@@ -100,29 +101,25 @@ function fromRemote(service: RemoteService): Service {
   };
 }
 
-export async function listServices(): Promise<Service[]> {
-  const remote = await readRemoteList<RemoteService>("/api/servicios");
+export async function listServices(page?: FeedPage): Promise<Service[]> {
+  if (page) validateFeedPage(page);
+  const remote = await readRemoteList<RemoteService>("/api/servicios", page);
   const services = new Map<string, Service>(
     (remote ?? []).map((value) => [value.id, fromRemote(value)]),
   );
-  if (!Capacitor.isNativePlatform())
-    return resolveImages(
-      "service",
-      [...services.values()].map((service) => {
-        const image = browserImage("service", service.id);
-        return image ? { ...service, image, imagePending: true } : service;
-      }),
-    );
+  if (!Capacitor.isNativePlatform()) return resolveImages("service", [...services.values()]);
   const db = await getDatabase();
   const session = await getSecureSession();
   const rows = await db.query(
     `SELECT s.*, u.NombreUsuario, u.Celular, c.NombreCategoria, d.NombreDistrito, d.IdDistrito,
     (SELECT RutaLocal FROM ImagenesServicio i WHERE i.IdServicio = s.IdServicio AND i.Eliminado = 0 ORDER BY i.Orden LIMIT 1) RutaLocal,
-    (SELECT UrlRemota FROM ImagenesServicio i WHERE i.IdServicio = s.IdServicio AND i.Eliminado = 0 ORDER BY i.Orden LIMIT 1) UrlRemota
+    (SELECT UrlRemota FROM ImagenesServicio i WHERE i.IdServicio = s.IdServicio AND i.Eliminado = 0 ORDER BY i.Orden LIMIT 1) UrlRemota,
+    (SELECT SyncEstado FROM ImagenesServicio i WHERE i.IdServicio=s.IdServicio AND i.Eliminado=0 ORDER BY i.Orden LIMIT 1) ImageSyncEstado
     FROM Servicios s JOIN Usuarios u ON u.IdUsuario = s.IdUsuario
     JOIN CategoriasServicio c ON c.IdCategoria = s.IdCategoria JOIN Distritos d ON d.IdDistrito = u.IdDistrito
-    WHERE u.Eliminado=0 AND (s.SyncEstado='sincronizado' OR u.IdUsuario=? OR u.RemoteId=?);`,
-    [session?.userId ?? "", session?.userId ?? ""],
+    WHERE u.Eliminado=0 AND (s.SyncEstado='sincronizado' OR u.IdUsuario=? OR u.RemoteId=?)
+    ${page ? "ORDER BY CASE WHEN d.IdDistrito=? AND d.NombreDistrito<>'Sin especificar' THEN 0 ELSE 1 END,s.FechaPublicacion DESC,s.IdServicio LIMIT ? OFFSET ?" : ""};`,
+    [session?.userId ?? "", session?.userId ?? "", ...(page ? [page.districtId ?? null, page.size, page.page * page.size] : [])],
   );
   for (const row of rows.values ?? []) {
     const id = String(row.IdServicio);
@@ -133,9 +130,14 @@ export async function listServices(): Promise<Service[]> {
     const existing = services.get(id);
     // A newer API snapshot wins over synchronized fields, while local photos stay on the phone.
     if (existing && row.SyncEstado === "sincronizado") {
-      if (row.RutaLocal) {
+      if (row.RutaLocal && (!row.UrlRemota || existing.image === row.UrlRemota)) {
+        if (row.UrlRemota) {
+          existing.imageReference = String(row.UrlRemota);
+          existing.imageDisplaySource = String(row.RutaLocal);
+        }
         existing.image = String(row.RutaLocal);
         existing.imagePending = !row.UrlRemota;
+        existing.imageError = row.ImageSyncEstado === "error" ? "No se pudo subir la fotografía. Sigue guardada en el teléfono." : undefined;
       }
       continue;
     }
@@ -171,7 +173,10 @@ export async function listServices(): Promise<Service[]> {
       lat: row.Latitud ?? undefined,
       lng: row.Longitud ?? undefined,
       image: String(row.RutaLocal || row.UrlRemota || ""),
+      imageReference: row.UrlRemota ? String(row.UrlRemota) : undefined,
+      imageDisplaySource: row.UrlRemota && row.RutaLocal ? String(row.RutaLocal) : undefined,
       imagePending: !!row.RutaLocal && !row.UrlRemota,
+      imageError: row.ImageSyncEstado === "error" ? "No se pudo subir la fotografía. Sigue guardada en el teléfono." : undefined,
       syncStatus: row.SyncEstado,
       reviews:
         existing?.reviews ??
@@ -288,7 +293,7 @@ async function saveService(service: Service, action: "crear" | "actualizar"): Pr
   if (service.image)
     statements.push({
       statement: `INSERT INTO ImagenesServicio (IdImagen,IdServicio,RutaLocal,UrlRemota,Orden,SyncEstado)
-    VALUES (?,?,?,?,0,?) ON CONFLICT(IdImagen) DO UPDATE SET UrlRemota=CASE WHEN RutaLocal=excluded.RutaLocal THEN UrlRemota ELSE excluded.UrlRemota END,SyncEstado=CASE WHEN RutaLocal=excluded.RutaLocal THEN SyncEstado ELSE excluded.SyncEstado END,RutaLocal=excluded.RutaLocal;`,
+    VALUES (?,?,?,?,0,?) ON CONFLICT(IdImagen) DO UPDATE SET UrlRemota=CASE WHEN RutaLocal=excluded.RutaLocal THEN UrlRemota ELSE excluded.UrlRemota END,SyncEstado=CASE WHEN RutaLocal=excluded.RutaLocal THEN SyncEstado ELSE excluded.SyncEstado END,RutaLocal=CASE WHEN excluded.RutaLocal IS NULL AND UrlRemota=excluded.UrlRemota THEN RutaLocal ELSE excluded.RutaLocal END;`,
       values: [
         `img-${service.id}`,
         payload.id,

@@ -60,6 +60,7 @@ export type Service = {
   categoryId?: number;
   syncStatus?: SyncStatus;
   imagePending?: boolean;
+  imageError?: string;
   isDemo?: boolean;
   owner: string;
   ownerId?: string;
@@ -90,6 +91,7 @@ export type Post = {
   typeId?: number;
   syncStatus?: SyncStatus;
   imagePending?: boolean;
+  imageError?: string;
   isDemo?: boolean;
   owner: string;
   ownerId?: string;

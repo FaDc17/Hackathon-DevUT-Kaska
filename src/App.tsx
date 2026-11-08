@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { AuthScreen } from "./screens/Login/AuthScreen";
 import { RegisterScreen } from "./screens/Register/RegisterScreen";
@@ -53,11 +53,18 @@ import {
   updateProfileOnlineOrQueue,
 } from "./services/session";
 import { syncPendingProfileUpdates } from "./services/sync";
+import { getSecureSession } from "./services/secureSession";
+import { getUserById } from "./database/repositories/users";
+import { mergeFeed } from "./utils/pagination";
+import { PullToRefresh } from "./components/common/PullToRefresh";
+import { renewSessionIfNeeded } from "./services/apiClient";
+import { wasRemoteReadOnline } from "./services/remoteRead";
 
 type WebAccount = User & { passwordHash?: string };
 type RegistrationInput = {
   username: string;
   password: string;
+  confirmPassword?: string;
   address: string;
   phone: string;
   district: string;
@@ -96,9 +103,16 @@ export default function App() {
   const [sessionId, setSessionId] = useState("");
   const user = accounts.find((account) => account.id === sessionId) || null;
   const [screen, setScreen] = useState<Screen>("login");
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
   const [history, setHistory] = useState<Screen[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
+  const pagesLoaded = useRef({ services: 1, posts: 1 });
+  const feedVersion = useRef(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingFeed = useRef(false);
+  const [hasMore, setHasMore] = useState({ services: true, posts: true });
   const [selectedService, setSelectedService] = useState<EntityId>("");
   const [selectedPost, setSelectedPost] = useState<EntityId>("");
   const [selectedNeighborId, setSelectedNeighborId] = useState("");
@@ -113,10 +127,56 @@ export default function App() {
     "idle",
   );
   const notify = (message: string) => setToast(message);
+  useEffect(() => {
+    if (!sessionId) return;
+    let lastActivity = Date.now();
+    const activity = () => { lastActivity = Date.now(); };
+    const renew = () => {
+      void renewSessionIfNeeded(document.visibilityState === "visible" && Date.now() - lastActivity < 120_000);
+    };
+    const resume = () => { activity(); renew(); };
+    const timer = window.setInterval(renew, 30_000);
+    window.addEventListener("pointerdown", activity); window.addEventListener("keydown", activity);
+    window.addEventListener("online", resume); document.addEventListener("visibilitychange", resume);
+    return () => {
+      window.clearInterval(timer); window.removeEventListener("pointerdown", activity); window.removeEventListener("keydown", activity);
+      window.removeEventListener("online", resume); document.removeEventListener("visibilitychange", resume);
+    };
+  }, [sessionId]);
   const refreshFeed = async () => {
-    const [nextServices, nextPosts] = await Promise.all([listServices(), listPosts()]);
-    setServices(nextServices);
-    setPosts(nextPosts);
+    const version = ++feedVersion.current;
+    const session = await getSecureSession();
+    const profile = session ? await getUserById(session.userId) : null;
+    const options = { size: 20, districtId: profile?.districtId };
+    const complete = ["map", "profile", "agentChat"].includes(screenRef.current);
+    const [servicePages, postPages] = await Promise.all([
+      complete ? Promise.all([listServices()]) : Promise.all(Array.from({ length: pagesLoaded.current.services }, (_,page) => listServices({ ...options, page }))),
+      complete ? Promise.all([listPosts()]) : Promise.all(Array.from({ length: pagesLoaded.current.posts }, (_,page) => listPosts({ ...options, page }))),
+    ]);
+    if (version !== feedVersion.current || (await getSecureSession())?.userId !== session?.userId) return;
+    setServices(mergeFeed([], servicePages.flat()));
+    setPosts(mergeFeed([], postPages.flat()));
+    setHasMore({ services: servicePages.at(-1)!.length >= 20, posts: postPages.at(-1)!.length >= 20 });
+  };
+  useEffect(() => {
+    if (sessionId && ["map", "profile", "agentChat"].includes(screen)) void refreshFeed().catch(() => notify("No se pudo actualizar. Conservamos los datos guardados."));
+  }, [screen, sessionId]);
+  const loadMore = async (kind: "services" | "posts") => {
+    if (loadingFeed.current) return;
+    loadingFeed.current = true; setLoadingMore(true);
+    const version = feedVersion.current;
+    try {
+      const session = await getSecureSession();
+      const profile = session ? await getUserById(session.userId) : null;
+      const options = { page: pagesLoaded.current[kind], size: 20, districtId: profile?.districtId };
+      const next = kind === "services" ? await listServices(options) : await listPosts(options);
+      if (version !== feedVersion.current || (await getSecureSession())?.userId !== session?.userId) return;
+      if (kind === "services") setServices(items => mergeFeed(items, next as Service[]));
+      else setPosts(items => mergeFeed(items, next as Post[]));
+      pagesLoaded.current[kind]++;
+      setHasMore(current => ({ ...current, [kind]: next.length >= 20 }));
+    } catch (error) { notify(error instanceof Error ? error.message : "No se pudo cargar la siguiente página."); }
+    finally { loadingFeed.current = false; setLoadingMore(false); }
   };
   useEffect(() => {
     let active = true;
@@ -165,6 +225,7 @@ export default function App() {
         .then(refreshFeed)
         .catch(() => notify("Los cambios pendientes permanecen guardados."));
     };
+    const resume = () => { if (document.visibilityState === "visible") retry(); };
     const synced = () => {
       void refreshFeed().catch(() => {});
       void listUsers()
@@ -178,15 +239,19 @@ export default function App() {
     };
     window.addEventListener("kuska:unauthorized", unauthorized);
     window.addEventListener("online", retry);
+    document.addEventListener("visibilitychange", resume);
     window.addEventListener("kuska:account-deleted", accountDeleted);
     window.addEventListener("kuska:sync-pending", retry);
     window.addEventListener("kuska:sync-complete", synced);
+    window.addEventListener("kuska:image-state-changed", synced);
     return () => {
       window.removeEventListener("kuska:unauthorized", unauthorized);
       window.removeEventListener("online", retry);
+      document.removeEventListener("visibilitychange", resume);
       window.removeEventListener("kuska:account-deleted", accountDeleted);
       window.removeEventListener("kuska:sync-pending", retry);
       window.removeEventListener("kuska:sync-complete", synced);
+      window.removeEventListener("kuska:image-state-changed", synced);
     };
   }, []);
   useEffect(() => {
@@ -304,6 +369,7 @@ export default function App() {
       await registerOnline({
         username: input.username,
         password: input.password,
+        confirmPassword: input.confirmPassword,
         address: input.address,
         phone: input.phone,
         districtId: input.districtId,
@@ -425,6 +491,7 @@ export default function App() {
     if (screen === "services")
       return (
         <Services
+          user={user}
           services={services}
           category={category}
           setCategory={setCategory}
@@ -438,7 +505,7 @@ export default function App() {
         />
       );
     if (screen === "allServices")
-      return <AllServices services={services} openService={openService} back={back} />;
+      return <AllServices services={services} category={category} openService={openService} back={back} more={hasMore.services} loading={loadingMore} loadMore={() => void loadMore("services")} />;
     if (screen === "serviceDetail")
       return selectedServiceData ? (
         <ServiceDetail
@@ -459,6 +526,7 @@ export default function App() {
     if (screen === "solidarity")
       return (
         <Solidarity
+          user={user}
           posts={posts}
           openPost={openPost}
           openModal={() => {
@@ -469,10 +537,11 @@ export default function App() {
           back={back}
         />
       );
-    if (screen === "allPosts") return <AllPosts posts={posts} openPost={openPost} back={back} />;
+    if (screen === "allPosts") return <AllPosts posts={posts} openPost={openPost} back={back} more={hasMore.posts} loading={loadingMore} loadMore={() => void loadMore("posts")} />;
     if (screen === "emergency")
       return (
         <Emergency
+          more={hasMore.posts} loading={loadingMore} loadMore={() => void loadMore("posts")}
           posts={posts}
           openPost={openPost}
           openModal={() => {
@@ -560,6 +629,10 @@ export default function App() {
     if (screen === "agentChat")
       return (
         <AgentChat
+          onCatalogLoaded={(foundServices, foundPosts) => {
+            setServices(current => mergeFeed(current, foundServices));
+            setPosts(current => mergeFeed(current, foundPosts));
+          }}
           back={back}
           district={user.district}
           districtId={user.districtId}
@@ -583,7 +656,11 @@ export default function App() {
   return (
     <div className="app-canvas">
       <main className={`phone-shell ${showNav ? "with-nav" : ""}`}>
-        {content}
+        <PullToRefresh enabled={!!user && !modal && ["home", "services", "allServices", "solidarity", "allPosts", "emergency", "profile", "map", "favorites"].includes(screen)} onRefresh={async () => {
+          await syncPendingProfileUpdates();
+          await refreshFeed();
+          return wasRemoteReadOnline("/api/servicios") && wasRemoteReadOnline("/api/publicaciones");
+        }}>{content}</PullToRefresh>
         {showNav && <BottomNav screen={screen} go={go} />}
         {toast && (
           <div className="toast" role="status">

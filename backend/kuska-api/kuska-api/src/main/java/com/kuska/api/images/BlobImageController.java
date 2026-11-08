@@ -39,10 +39,6 @@ public class BlobImageController {
     public ResponseEntity<?> unavailable(BlobUnavailableException error) {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("timestamp",Instant.now(),"status",503,"error","BLOB_UNAVAILABLE","message",error.getMessage()));
     }
-    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
-    public ResponseEntity<?> tooLarge() {
-        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(Map.of("status",413,"error","IMAGE_TOO_LARGE","message","Elige una fotografía de hasta 5 MB."));
-    }
     @ExceptionHandler({org.springframework.web.bind.MissingServletRequestParameterException.class,
         org.springframework.web.multipart.support.MissingServletRequestPartException.class})
     public ResponseEntity<?> missingFields() {

@@ -5,6 +5,10 @@ import { navItems } from "../../data/demo";
 
 export function Icon({ name, size = 22 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
+    computer: <><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 21h8M12 16v5" /></>,
+    leaf: <><path d="M20 3C9 2 3 7 5 15c8 4 15-1 15-12ZM4 21 16 8" /></>,
+    scissors: <><circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="m8 8 13 13M8 16 21 3" /></>,
+    calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M7 3v4M17 3v4M3 11h18M8 15h2M14 15h2" /></>,
     home: (
       <>
         <path d="m3 11 9-8 9 8" />

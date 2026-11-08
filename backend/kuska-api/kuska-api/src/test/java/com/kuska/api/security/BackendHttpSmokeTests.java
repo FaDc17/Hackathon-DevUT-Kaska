@@ -20,6 +20,14 @@ import org.springframework.boot.health.registry.HealthContributorRegistry;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Profile;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.kuska.api.catalog.CanalAyudaRepository;
 import com.kuska.api.catalog.CategoriaServicioRepository;
@@ -30,7 +38,8 @@ import com.kuska.api.user.UsuarioRepository;
 
 /** Real loopback HTTP and embedded Tomcat, with database repositories mocked. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("test")
+@ActiveProfiles({"test", "multipart-http-test"})
+@Import(BackendHttpSmokeTests.MultipartProbe.class)
 class BackendHttpSmokeTests {
 	@LocalServerPort int port;
 	@MockitoBean DepartamentoRepository departments;
@@ -40,6 +49,63 @@ class BackendHttpSmokeTests {
 	@MockitoBean CanalAyudaRepository channels;
 	@MockitoBean UsuarioRepository users;
 	@Autowired HealthContributorRegistry healthContributors;
+	@Autowired JwtService jwtService;
+
+	@DynamicPropertySource
+	static void productionMultipartLimits(DynamicPropertyRegistry registry) throws Exception {
+		// Exercise the values shipped in production, not Spring's defaults or duplicated test constants.
+		var properties = new java.util.Properties();
+		try (var stream = java.nio.file.Files.newInputStream(java.nio.file.Path.of("src/main/resources/application.properties"))) {
+			properties.load(stream);
+		}
+		for (String key : new String[] {"spring.servlet.multipart.max-file-size", "spring.servlet.multipart.max-request-size"})
+			registry.add(key, () -> properties.getProperty(key));
+	}
+
+	@RestController
+	@Profile("multipart-http-test")
+	static class MultipartProbe {
+		@PostMapping("/__verification/multipart")
+		java.util.Map<String, Long> upload(@RequestPart("archivo") MultipartFile file) {
+			return java.util.Map.of("bytes", file.getSize());
+		}
+	}
+
+	@Test void acceptsTwoMegabytesThroughTheRealMultipartParser() throws Exception {
+		assertEquals(200, uploadBytes(2 * 1024 * 1024).statusCode());
+	}
+
+	@Test void acceptsExactlyTenMegabytesIncludingMultipartOverhead() throws Exception {
+		var response = uploadBytes(10 * 1024 * 1024);
+		assertEquals(200, response.statusCode());
+		assertTrue(response.body().contains("10485760"));
+	}
+
+	@Test void parserRejectionBeforeControllerSelectionReturnsHelpful413() throws Exception {
+		var response = uploadBytes(10 * 1024 * 1024 + 1);
+		assertEquals(413, response.statusCode());
+		var json = new ObjectMapper().readTree(response.body());
+		assertEquals("IMAGE_TOO_LARGE", json.get("error").asString());
+		assertFalse(response.body().contains("INTERNAL_ERROR"));
+	}
+
+	private HttpResponse<String> uploadBytes(int count) throws Exception {
+		org.mockito.Mockito.when(users.existsByIdAndEstadoTrueAndEliminadoFalse("upload-test-user")).thenReturn(true);
+		String token = jwtService.createAccessToken(new JwtService.UsuarioTokenSubject("upload-test-user", "vecino"));
+		String boundary = "kuska-multipart-verification";
+		byte[] prefix = ("--" + boundary + "\r\nContent-Disposition: form-data; name=\"archivo\"; filename=\"foto.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+		byte[] suffix = ("\r\n--" + boundary + "--\r\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+		byte[] body = new byte[prefix.length + count + suffix.length];
+		System.arraycopy(prefix, 0, body, 0, prefix.length);
+		System.arraycopy(suffix, 0, body, prefix.length + count, suffix.length);
+		try (HttpClient client = HttpClient.newHttpClient()) {
+			var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/__verification/multipart"))
+				.timeout(Duration.ofSeconds(15)).header("Authorization", "Bearer " + token)
+				.header("Content-Type", "multipart/form-data; boundary=" + boundary)
+				.POST(HttpRequest.BodyPublishers.ofByteArray(body)).build();
+			return client.send(request, HttpResponse.BodyHandlers.ofString());
+		}
+	}
 
 	@Test
 	void servesHealthCatalogAndProtectedRoutesOverRealHttp() throws Exception {

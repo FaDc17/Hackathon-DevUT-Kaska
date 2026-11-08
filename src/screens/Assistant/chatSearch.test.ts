@@ -14,7 +14,7 @@ vi.mock("./chatCloud", async (original) => ({
 }));
 vi.mock("../../database/repositories/services", () => ({ listServices: mocks.services }));
 vi.mock("../../database/repositories/posts", () => ({ listPosts: mocks.posts }));
-vi.mock("../../services/remoteRead", () => ({ wasRemoteReadFresh: mocks.fresh }));
+vi.mock("../../services/remoteRead", () => ({ wasRemoteReadOnline: mocks.fresh }));
 
 const service: Service = {
   id: "service-a",
@@ -59,6 +59,14 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("búsqueda integrada del chat", () => {
+  it("reads the saved repository beyond the visible feed while offline without calling Cloudflare", async () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    mocks.fresh.mockReturnValue(false);
+    const result = await searchChat("Electricista", "Breña", undefined, { services: [], posts: [] }, new AbortController().signal);
+    expect(result.services).toEqual([service]);
+    expect(result.mode).toBe("local");
+    expect(mocks.cloud).not.toHaveBeenCalled();
+  });
   it("interpreta con IA y devuelve exclusivamente los identificadores de Kuska", async () => {
     mocks.cloud.mockResolvedValue({
       usoIA: true,

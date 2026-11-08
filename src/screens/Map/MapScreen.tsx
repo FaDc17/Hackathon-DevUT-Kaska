@@ -43,7 +43,10 @@ export function MapScreen({
     type === "Servicios" ? "service" : type === "Emergencias" ? "emergency" : "community";
 
   const markers: MapMarker[] = useMemo(
-    () => items.map((it) => ({ id: it.id, kind, label: it.title, ...coordsOf(it) })),
+    () => items.flatMap((it) => {
+      const point = coordsOf(it);
+      return point ? [{ id: it.id, kind, label: it.title, ...point }] : [];
+    }),
     [items, kind],
   );
 
@@ -118,7 +121,7 @@ export function MapScreen({
         />
         <div className="map-hint">
           {status ||
-            (items.length ? "Toca un marcador para ver el detalle" : "No hay publicaciones aquí")}
+            (markers.length ? "Toca un marcador para ver el detalle" : "No hay publicaciones con ubicación marcada")}
         </div>
       </div>
       {item && (

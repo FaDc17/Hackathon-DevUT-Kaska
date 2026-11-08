@@ -6,11 +6,16 @@ export function AllServices({
   services,
   openService,
   back,
+  category = "Todos",
+  more, loading, loadMore,
 }: {
   services: Service[];
   openService: (id: string | number) => void;
   back: () => void;
+  category?: string;
+  more?: boolean; loading?: boolean; loadMore?: () => void;
 }) {
+  services = services.filter((service) => category === "Todos" || category === "Más" || service.category === category);
   return (
     <section className="page">
       <Header title="Todos los servicios" kicker="PUBLICACIONES" onBack={back} />
@@ -31,6 +36,7 @@ export function AllServices({
           <EmptyState text="Aún no hay servicios publicados." />
         )}
       </div>
+      {more && <button className="show-all-button" disabled={loading} onClick={loadMore}>{loading ? "Cargando…" : "Cargar más"}</button>}
     </section>
   );
 }

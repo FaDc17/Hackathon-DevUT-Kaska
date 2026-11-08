@@ -4,6 +4,7 @@ import type { EntityId, Service, Post } from "../types";
 import { getDatabase } from "../database/connection";
 import { getSecureSession } from "./secureSession";
 import { apiRequest, ApiError } from "./apiClient";
+import { compressImage, MAX_IMAGE_BYTES } from "./imageCompression";
 import { browserImage, browserImageIsPending, isRemoteImage, persistSelectedImage } from "./images";
 import { amendRemoteCache, cachedList, cacheRemoteList } from "./remoteRead";
 import {
@@ -30,6 +31,12 @@ const tables = (kind: ImageKind) =>
       };
 const inFlight = new Map<string, Promise<void>>();
 const readCache = new Map<string, { url: string; expires: number; userId: string }>();
+const retryAfter = new Map<string, { at: number; attempts: number; uri: string }>();
+const uploadErrorKey = (kind: ImageKind, id: EntityId) => `kuska:image-error:${kind}:${id}`;
+
+export function browserImageError(kind: ImageKind, id: EntityId): string | undefined {
+  return localStorage.getItem(uploadErrorKey(kind, id)) || undefined;
+}
 
 export async function uploadLocalImage(
   kind: ImageKind,
@@ -41,8 +48,8 @@ export async function uploadLocalImage(
   if (!response.ok)
     throw new Error("No se pudo leer la fotografía guardada. Se conserva pendiente.");
   const blob = await response.blob();
-  if (!blob.size || blob.size > 5 * 1024 * 1024)
-    throw new Error("Elige una fotografía de hasta 5 MB.");
+  if (!blob.size || blob.size > MAX_IMAGE_BYTES)
+    throw new Error("Elige una fotografía de hasta 10 MB.");
   const bytes = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
   const mime =
     bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78
@@ -53,16 +60,20 @@ export async function uploadLocalImage(
           ? "image/webp"
           : "";
   if (!mime) throw new Error("La fotografía guardada no es JPG, PNG o WebP.");
+  const prepared = await compressImage(new Blob([blob], { type: mime }));
   const form = new FormData();
   form.set("tipo", tables(kind).api);
   form.set("entidadId", String(parentId));
   form.set("imagenId", imageId);
   form.set(
     "archivo",
-    new Blob([blob], { type: mime }),
-    "foto." + (mime === "image/jpeg" ? "jpg" : mime.split("/")[1]),
+    prepared,
+    "foto." + (prepared.type === "image/jpeg" ? "jpg" : prepared.type.split("/")[1]),
   );
-  return apiRequest("/api/imagenes", { method: "POST", body: form }, undefined, 60_000);
+  const result = await apiRequest<{ id: string; url: string }>("/api/imagenes", { method: "POST", body: form }, undefined, 60_000);
+  if (result.id !== imageId || !isRemoteImage(result.url))
+    throw new Error("El servidor no confirmó la fotografía. Se conserva pendiente.");
+  return result;
 }
 
 /** Additional statements join the existing content + synchronization transaction. */
@@ -200,12 +211,15 @@ export async function tryUploadBrowserImage(kind: ImageKind, id: EntityId): Prom
   if (!uri || !browserImageIsPending(kind, id) || !session || !navigator.onLine) return;
   const key = `${session.userId}:${kind}:${id}`;
   if (inFlight.has(key)) return inFlight.get(key);
+  if (retryAfter.get(key)?.uri === uri && (retryAfter.get(key)?.at ?? 0) > Date.now()) return;
   const work = (async () => {
     try {
       const uploaded = await uploadLocalImage(kind, id, `img-${id}`, uri);
       if ((await getSecureSession())?.userId !== session.userId || browserImage(kind, id) !== uri)
         return;
       localStorage.setItem(`kuska:image-uploaded:${kind}:${id}`, uploaded.url);
+      localStorage.removeItem(uploadErrorKey(kind, id));
+      retryAfter.delete(key);
       await amendRemoteCache<{ id: string; images: Array<{ id: string; url: string }> }>(
         tables(kind).feed,
         String(id),
@@ -213,13 +227,26 @@ export async function tryUploadBrowserImage(kind: ImageKind, id: EntityId): Prom
           ...row,
           images: [
             { id: uploaded.id, url: uploaded.url },
-            ...row.images.filter((image) => image.id !== uploaded.id),
+            ...(row.images ?? []).filter((image) => image.id !== uploaded.id),
           ],
         }),
       ).catch(() => {});
       window.dispatchEvent(new Event("kuska:sync-complete"));
-    } catch {
-      /* Text is already durable. Keep the original photo and retry on the next feed refresh. */
+    } catch (error) {
+      if ((await getSecureSession())?.userId !== session.userId || browserImage(kind, id) !== uri) return;
+      const attempts = (retryAfter.get(key)?.uri === uri ? retryAfter.get(key)!.attempts : 0) + 1;
+      const delay = Math.min(60_000, 1000 * 2 ** Math.min(attempts, 6));
+      retryAfter.set(key, { attempts, uri, at: Date.now() + delay });
+      localStorage.setItem(uploadErrorKey(kind, id), error instanceof Error ? error.message : "No se pudo subir la fotografía.");
+      window.dispatchEvent(new Event("kuska:image-state-changed"));
+      if (attempts <= 5 && (!(error instanceof ApiError) || error.status === 0 || error.status >= 500)) {
+        window.setTimeout(() => {
+          void getSecureSession().then(current => {
+            if (navigator.onLine && current?.userId === session.userId && browserImage(kind, id) === uri && browserImageIsPending(kind, id))
+              window.dispatchEvent(new Event("kuska:sync-pending"));
+          }).catch(() => {});
+        }, delay);
+      }
     }
   })().finally(() => inFlight.delete(key));
   inFlight.set(key, work);
@@ -235,12 +262,15 @@ export async function resolveImages<T extends Service | Post>(
     records.map(async (record) => {
       if (!Capacitor.isNativePlatform() && record.ownerId === session?.userId) {
         void tryUploadBrowserImage(kind, record.id);
-        if (browserImage(kind, record.id))
+        if (browserImage(kind, record.id) && browserImageIsPending(kind, record.id))
           return {
             ...record,
             image: browserImage(kind, record.id)!,
             imagePending: browserImageIsPending(kind, record.id),
+            imageError: browserImageError(kind, record.id),
           };
+        const uploaded = localStorage.getItem(`kuska:image-uploaded:${kind}:${record.id}`);
+        if (uploaded && isRemoteImage(uploaded)) record = { ...record, image: record.image || uploaded, imagePending: false, imageError: undefined };
       }
       if (!record.image || !isRemoteImage(record.image) || !session) return record;
       try {

@@ -26,13 +26,14 @@ export type AuthResponse = {
 export type RegisterRequest = {
   username: string;
   password: string;
+  confirmPassword?: string;
   phone: string;
   address: string;
   districtId: number;
   about?: string;
 };
 
-export type ProfileUpdateRequest = Omit<RegisterRequest, "password">;
+export type ProfileUpdateRequest = Omit<RegisterRequest, "password" | "confirmPassword">;
 
 export function toLocalUser(user: PublicUser): User {
   return {

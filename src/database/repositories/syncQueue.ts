@@ -1,5 +1,6 @@
 import { getDatabase } from "../connection";
 import { getSecureSession } from "../../services/secureSession";
+import { encodeQueuePayload, decodeQueuePayload } from "../../services/privateStorage";
 
 export type PendingSyncOperation = {
   IdOperacion: number;
@@ -92,7 +93,7 @@ export async function enqueueSyncOperation(
   const result = await db.run(
     `INSERT INTO ColaSincronizacion (Entidad, EntidadId, Operacion, Payload, OwnerId, ClientOperationId)
      VALUES (?, ?, ?, ?, ?, ?);`,
-    [entity, entityId, operation, JSON.stringify(payload), session.userId, crypto.randomUUID()],
+    [entity, entityId, operation, await encodeQueuePayload(entity, session.userId, payload), session.userId, crypto.randomUUID()],
   );
   if (!result.changes?.lastId || result.changes.lastId < 1) {
     throw new Error("SQLite no confirmó la creación de la operación pendiente.");
@@ -122,7 +123,9 @@ export async function pendingSyncOperations(limit = 100): Promise<PendingSyncOpe
      LIMIT ?;`,
     [session.userId, limit],
   );
-  return (result.values ?? []) as PendingSyncOperation[];
+  return Promise.all(((result.values ?? []) as PendingSyncOperation[]).map(async (row) => ({
+    ...row, Payload: row.Payload ? await decodeQueuePayload(row.Entidad, session.userId, row.Payload) : null,
+  })));
 }
 
 export async function markSyncOperationFailed(id: number, error: string): Promise<void> {

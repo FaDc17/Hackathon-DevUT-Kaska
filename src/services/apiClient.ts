@@ -1,5 +1,6 @@
 import { Capacitor } from "@capacitor/core";
-import { clearSecureSession, getSecureSession } from "./secureSession";
+import { clearSecureSession, getSecureSession, saveSecureSession } from "./secureSession";
+import { tokenExpiresAt } from "./sessionTokens";
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const defaultBaseUrl =
@@ -15,6 +16,37 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+let renewal: Promise<void> | null = null;
+let retryRenewalAt = 0;
+/** Only renew a still-valid session. Older deployed servers may not support this endpoint yet. */
+export async function renewSessionIfNeeded(allowRenewal = true): Promise<void> {
+  if (renewal) return renewal;
+  const session = await getSecureSession();
+  const expires = session ? tokenExpiresAt(session.accessToken) : null;
+  if (!session || !expires) return;
+  if (expires <= Date.now()) {
+    if ((await getSecureSession())?.accessToken === session.accessToken) {
+      await clearSecureSession();
+      window.dispatchEvent(new Event("kuska:unauthorized"));
+    }
+    return;
+  }
+  if (!allowRenewal || !navigator.onLine || expires - Date.now() > 120_000 || Date.now() < retryRenewalAt) return;
+  if (renewal) return renewal;
+  renewal = (async () => {
+    try {
+      const result = await apiRequest<{ accessToken: string; user: { id: string } }>("/api/auth/refresh", { method: "POST" });
+      if ((await getSecureSession())?.accessToken !== session.accessToken) return;
+      if (result.user.id !== session.userId || (tokenExpiresAt(result.accessToken) ?? 0) <= Date.now()) throw new Error("Sesión inválida");
+      await saveSecureSession({ userId: session.userId, accessToken: result.accessToken });
+    } catch {
+      retryRenewalAt = Date.now() + 60_000;
+      // Network and missing-endpoint failures never invalidate an otherwise valid JWT.
+    }
+  })().finally(() => { renewal = null; });
+  return renewal;
 }
 
 export async function apiRequest<T>(
@@ -43,6 +75,7 @@ export async function apiRequest<T>(
   ) {
     headers.set("Content-Type", "application/json");
   }
+  if (!path.startsWith("/api/auth/") && !headers.has("Authorization")) await renewSessionIfNeeded();
   const session = await getSecureSession();
   if (session?.accessToken && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${session.accessToken}`);
@@ -72,7 +105,8 @@ export async function apiRequest<T>(
     options.signal?.removeEventListener("abort", abort);
   }
 
-  if (response.status === 401 && !path.startsWith("/api/auth/login")) {
+  if (response.status === 401 && session && headers.get("Authorization") === `Bearer ${session.accessToken}` && !["/api/auth/login", "/api/auth/register"].some(route => path.startsWith(route)) &&
+      (await getSecureSession())?.accessToken === session.accessToken) {
     await clearSecureSession();
     window.dispatchEvent(new Event("kuska:unauthorized"));
   }

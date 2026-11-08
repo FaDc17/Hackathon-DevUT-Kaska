@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { LocationPicker } from "../../components/map/KuskaMap";
-import { coordsOf, districtCenter, roundPoint } from "../../utils/geo";
+import { districtCenter, roundPoint } from "../../utils/geo";
 import type { LatLng } from "../../utils/geo";
 import type { FormEvent } from "react";
 import { Icon, Modal } from "../../components/common/CommonComponents";
@@ -17,6 +17,7 @@ export function CreateEmergency({
   onPublish: (p: Post) => Promise<void> | void;
 }) {
   const [error, setError] = useState("");
+  const [location, setLocation] = useState(user.district);
   const [point, setPoint] = useState<LatLng | null>(null);
   const [file, setFile] = useState<File>();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -28,7 +29,7 @@ export function CreateEmergency({
     if (!String(fd.get("title") || "").trim() || !String(fd.get("description") || "").trim())
       return setError("El título y la descripción son obligatorios.");
     const newId = draftId;
-    const coords = point ? roundPoint(point) : coordsOf({ id: newId, district: user.district });
+    const coords = point ? roundPoint(point) : null;
     if (saving) return;
     if (
       file &&
@@ -51,8 +52,8 @@ export function CreateEmergency({
         district: user.district,
         districtId: user.districtId,
         location: String(fd.get("location")),
-        lat: coords.lat,
-        lng: coords.lng,
+        lat: coords?.lat,
+        lng: coords?.lng,
         createdAt: Date.now(),
         mine: true,
         image,
@@ -147,7 +148,8 @@ export function CreateEmergency({
             name="location"
             maxLength={200}
             disabled={saving}
-            defaultValue={`${user.district} · referencia aproximada`}
+            value={location}
+            onChange={(event) => setLocation(event.target.value)}
           />
         </label>
         <div className="picker-field">

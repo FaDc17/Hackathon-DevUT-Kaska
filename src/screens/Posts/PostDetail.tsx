@@ -87,7 +87,7 @@ export function PostDetail({
           </p>
         )}
         {post.imagePending && (
-          <p className="range-help">Fotografía guardada en este dispositivo; pendiente de subir.</p>
+          <p className="range-help" role="status">{post.imageError || "Fotografía guardada en este dispositivo; pendiente de subir."}</p>
         )}
         {!!post.ownerId && [user.id, user.remoteId].includes(post.ownerId) && (
           <div className="modal-actions">

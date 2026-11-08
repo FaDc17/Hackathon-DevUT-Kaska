@@ -13,6 +13,8 @@ import java.io.FileOutputStream;
 /** Images live in private app storage, independently of the original picker URI. */
 @CapacitorPlugin(name = "PersistentImages")
 public class PersistentImagesPlugin extends Plugin {
+    private static final int MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+    private static final int MAX_DATA_URL_CHARACTERS = ((MAX_IMAGE_BYTES + 2) / 3) * 4 + 128;
     @PluginMethod
     public void remove(PluginCall call) {
         String value = call.getString("uri");
@@ -48,14 +50,17 @@ public class PersistentImagesPlugin extends Plugin {
             call.reject("Selecciona una fotografía JPG, PNG o WebP.");
             return;
         }
-        if (dataUrl.length() > 8 * 1024 * 1024) {
-            call.reject("La fotografía es demasiado grande. Selecciona otra de hasta 5 MB.");
+        if (dataUrl.length() > MAX_DATA_URL_CHARACTERS) {
+            call.reject("La fotografía es demasiado grande. Selecciona otra de hasta 10 MB.");
             return;
         }
         File temporary = null;
         try {
             byte[] bytes = Base64.decode(dataUrl.substring(dataUrl.indexOf(',') + 1), Base64.DEFAULT);
-            if (bytes.length > 5 * 1024 * 1024) throw new IllegalArgumentException();
+            if (bytes.length > MAX_IMAGE_BYTES) {
+                call.reject("La fotografía es demasiado grande. Selecciona otra de hasta 10 MB.");
+                return;
+            }
             File directory = new File(getContext().getFilesDir(), "kuska-images");
             if (!directory.isDirectory() && !directory.mkdirs()) throw new java.io.IOException();
             String extension = dataUrl.startsWith("data:image/png") ? ".png"

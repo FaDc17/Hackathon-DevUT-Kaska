@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.kuska.api.content.ContentDtos.EmergencyRequest;
@@ -45,8 +46,9 @@ public class ContentController {
 	}
 
 	@GetMapping("/api/servicios")
-	public List<ServiceView> services() {
-		return content.services();
+	public List<ServiceView> services(@RequestParam(required=false) Integer page,
+			@RequestParam(defaultValue="20") int size, @RequestParam(required=false) Integer districtId) {
+		return page == null ? content.services() : content.servicesPage(page, size, districtId);
 	}
 
 	@GetMapping("/api/servicios/{serviceId}")
@@ -142,8 +144,9 @@ public class ContentController {
 	}
 
 	@GetMapping("/api/publicaciones")
-	public List<PostView> posts() {
-		return content.posts();
+	public List<PostView> posts(@RequestParam(required=false) Integer page,
+			@RequestParam(defaultValue="20") int size, @RequestParam(required=false) Integer districtId) {
+		return page == null ? content.posts() : content.postsPage(page, size, districtId);
 	}
 
 	@GetMapping("/api/publicaciones/{postId}")

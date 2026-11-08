@@ -118,7 +118,7 @@ export function seccionSolicitada(consulta: string): Screen | null {
     return null;
   // Solo instrucciones explícitas, para no confundir una búsqueda con una orden de navegación.
   if (
-    !/^(abre|abrir|ir a|ve a|entra a|entrar a|llevame a|muestrame|mostrar|quiero ver|quiero ir a|como entro a|vuelve a|regresa a|publicar|quiero publicar|reportar|quiero reportar)/.test(
+    !/^(abre|abrir|ir a|ve a|entra a|entrar a|llevame a|muestrame|mostrar|quiero ver|quiero consultar|consultar|quiero ir a|como entro a|vuelve a|regresa a|publicar|quiero publicar|reportar|quiero reportar)/.test(
       q,
     )
   )

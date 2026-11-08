@@ -32,6 +32,30 @@ export type GeographicCatalog = {
   source: "api" | "local";
 };
 
+export function provincesForDepartment(districts: District[], departmentId: string): string[] {
+  return [
+    ...new Set(
+      districts
+        .filter((district) => String(district.idDepartamento) === departmentId)
+        .map((district) => district.provincia.trim())
+        .filter(Boolean),
+    ),
+  ].sort((a, b) => a.localeCompare(b, "es"));
+}
+
+export function districtsForProvince(
+  districts: District[],
+  departmentId: string,
+  province: string,
+): District[] {
+  return districts
+    .filter(
+      (district) =>
+        String(district.idDepartamento) === departmentId && district.provincia === province,
+    )
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+}
+
 const CACHE_PREFIX = "kuska-catalog-";
 function readWebCache<T>(name: string): T[] {
   try {
@@ -158,7 +182,8 @@ export function channelsForDistrict(channels: Channel[], district: District): Ch
     const applies =
       c.cobertura === "Nacional" ||
       (c.cobertura === "Regional" && c.idDepartamento === district.idDepartamento) ||
-      (["Distrital", "Interdistrital"].includes(c.cobertura) && c.idDistrito === district.id);
+      (district.nombre.trim().toLocaleLowerCase("es") !== "sin especificar" &&
+        ["Distrital", "Interdistrital"].includes(c.cobertura) && c.idDistrito === district.id);
     if (!applies) return false;
     const key = `${c.nombreInstitucion.trim().toLocaleLowerCase("es")}|${c.telefono.replace(/\D/g, "")}|${c.tipoAyuda.toLocaleLowerCase("es")}`;
     if (seen.has(key)) return false;

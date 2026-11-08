@@ -34,14 +34,34 @@ public class JwtService {
 	}
 
 	public String createAccessToken(UsuarioTokenSubject subject) {
+		return createAccessToken(subject, Instant.now());
+	}
+
+	private String createAccessToken(UsuarioTokenSubject subject, Instant authenticatedAt) {
 		Instant issuedAt = Instant.now();
+		Instant deadline = authenticatedAt.plusSeconds(8 * 60 * 60);
+		Instant expires = issuedAt.plusMillis(expirationMillis);
+		if (expires.isAfter(deadline)) expires = deadline;
+		if (!expires.isAfter(issuedAt)) throw new IllegalArgumentException("La sesión alcanzó su duración máxima.");
 		return Jwts.builder()
 				.subject(subject.id())
 				.claim("username", subject.username())
+				.claim("auth_time", authenticatedAt.getEpochSecond())
 				.issuedAt(Date.from(issuedAt))
-				.expiration(Date.from(issuedAt.plusMillis(expirationMillis)))
+				.expiration(Date.from(expires))
 				.signWith(signingKey)
 				.compact();
+	}
+
+	/** Renewal requires a signed, unexpired token and retains the original 8-hour deadline. */
+	public String renewAccessToken(String token, UsuarioTokenSubject subject) {
+		parse(token);
+		Claims claims = Jwts.parser().verifyWith(signingKey).build().parseSignedClaims(token).getPayload();
+		if (!subject.id().equals(claims.getSubject())) throw new IllegalArgumentException("Identidad inválida.");
+		Number start = claims.get("auth_time", Number.class);
+		Instant authenticatedAt = start == null ? claims.getIssuedAt().toInstant() : Instant.ofEpochSecond(start.longValue());
+		if (authenticatedAt.isAfter(Instant.now())) throw new IllegalArgumentException("Sesión inválida.");
+		return createAccessToken(subject, authenticatedAt);
 	}
 
 	public AuthenticatedUser parse(String token) {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { LocationPicker } from "../../components/map/KuskaMap";
-import { coordsOf, districtCenter, roundPoint } from "../../utils/geo";
+import { districtCenter, roundPoint } from "../../utils/geo";
 import type { LatLng } from "../../utils/geo";
 import type { FormEvent } from "react";
 import { Icon, Modal } from "../../components/common/CommonComponents";
@@ -19,6 +19,7 @@ export function CreatePost({
   initial?: Post;
 }) {
   const [error, setError] = useState("");
+  const [location, setLocation] = useState(initial?.location || user.district);
   const [point, setPoint] = useState<LatLng | null>(
     initial?.lat != null && initial?.lng != null ? { lat: initial.lat, lng: initial.lng } : null,
   );
@@ -36,7 +37,7 @@ export function CreatePost({
     )
       return setError("Completa los campos obligatorios.");
     const newId = draftId;
-    const coords = point ? roundPoint(point) : coordsOf({ id: newId, district: user.district });
+    const coords = point ? roundPoint(point) : null;
     setBusy(true);
     setError("");
     try {
@@ -51,9 +52,10 @@ export function CreatePost({
         category: String(fd.get("category")) as Post["category"],
         typeId: initial?.category === String(fd.get("category")) ? initial?.typeId : undefined,
         district: user.district,
+        districtId: user.districtId,
         location: String(fd.get("location")),
-        lat: coords.lat,
-        lng: coords.lng,
+        lat: coords?.lat,
+        lng: coords?.lng,
         image,
         createdAt: initial?.createdAt ?? Date.now(),
         mine: true,
@@ -134,7 +136,8 @@ export function CreatePost({
           <input
             name="location"
             maxLength={200}
-            defaultValue={initial?.location || `${user.district} · zona aproximada`}
+            value={location}
+            onChange={(event) => setLocation(event.target.value)}
           />
         </label>
         <div className="picker-field">

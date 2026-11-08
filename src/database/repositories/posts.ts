@@ -86,26 +86,21 @@ function fromRemote(post: RemotePost): Post {
     })),
   };
 }
-export async function listPosts(): Promise<Post[]> {
-  const remote = await readRemoteList<RemotePost>("/api/publicaciones");
+export async function listPosts(page?: import("../../services/remoteRead").FeedPage): Promise<Post[]> {
+  const remote = await readRemoteList<RemotePost>("/api/publicaciones", page);
   const posts = new Map<string, Post>((remote ?? []).map((value) => [value.id, fromRemote(value)]));
-  if (!Capacitor.isNativePlatform())
-    return resolveImages(
-      "post",
-      [...posts.values()].map((post) => {
-        const image = browserImage("post", post.id);
-        return image ? { ...post, image, imagePending: true } : post;
-      }),
-    );
+  if (!Capacitor.isNativePlatform()) return resolveImages("post", [...posts.values()]);
   const db = await getDatabase();
   const session = await getSecureSession();
   const result = await db.query(
     `SELECT p.*,u.NombreUsuario,t.NombreTipo,d.NombreDistrito,d.IdDistrito,
     (SELECT RutaLocal FROM ImagenesPublicacion i WHERE i.IdPublicacion=p.IdPublicacion AND i.Eliminado=0 ORDER BY i.Orden LIMIT 1) RutaLocal,
-    (SELECT UrlRemota FROM ImagenesPublicacion i WHERE i.IdPublicacion=p.IdPublicacion AND i.Eliminado=0 ORDER BY i.Orden LIMIT 1) UrlRemota
+    (SELECT UrlRemota FROM ImagenesPublicacion i WHERE i.IdPublicacion=p.IdPublicacion AND i.Eliminado=0 ORDER BY i.Orden LIMIT 1) UrlRemota,
+    (SELECT SyncEstado FROM ImagenesPublicacion i WHERE i.IdPublicacion=p.IdPublicacion AND i.Eliminado=0 ORDER BY i.Orden LIMIT 1) ImageSyncEstado
     FROM Publicaciones p JOIN Usuarios u ON u.IdUsuario=p.IdUsuario JOIN TiposPublicacion t ON t.IdTipoPublicacion=p.IdTipoPublicacion JOIN Distritos d ON d.IdDistrito=u.IdDistrito
-    WHERE u.Eliminado=0 AND (p.SyncEstado='sincronizado' OR u.IdUsuario=? OR u.RemoteId=?);`,
-    [session?.userId ?? "", session?.userId ?? ""],
+    WHERE u.Eliminado=0 AND (p.SyncEstado='sincronizado' OR u.IdUsuario=? OR u.RemoteId=?)
+    ${page ? "ORDER BY CASE WHEN d.IdDistrito=? AND d.NombreDistrito<>'Sin especificar' THEN 0 ELSE 1 END,p.FechaPublicacion DESC,p.IdPublicacion LIMIT ? OFFSET ?" : ""};`,
+    [session?.userId ?? "", session?.userId ?? "", ...(page ? [page.districtId ?? null, page.size, page.page * page.size] : [])],
   );
   for (const row of result.values ?? []) {
     const id = String(row.IdPublicacion);
@@ -115,9 +110,14 @@ export async function listPosts(): Promise<Post[]> {
     }
     const existing = posts.get(id);
     if (existing && row.SyncEstado === "sincronizado") {
-      if (row.RutaLocal) {
+      if (row.RutaLocal && (!row.UrlRemota || existing.image === row.UrlRemota)) {
+        if (row.UrlRemota) {
+          existing.imageReference = String(row.UrlRemota);
+          existing.imageDisplaySource = String(row.RutaLocal);
+        }
         existing.image = String(row.RutaLocal);
         existing.imagePending = !row.UrlRemota;
+        existing.imageError = row.ImageSyncEstado === "error" ? "No se pudo subir la fotografía. Sigue guardada en el teléfono." : undefined;
       }
       continue;
     }
@@ -151,7 +151,10 @@ export async function listPosts(): Promise<Post[]> {
       lat: row.Latitud ?? undefined,
       lng: row.Longitud ?? undefined,
       image: row.RutaLocal || row.UrlRemota || undefined,
+      imageReference: row.UrlRemota ? String(row.UrlRemota) : undefined,
+      imageDisplaySource: row.UrlRemota && row.RutaLocal ? String(row.RutaLocal) : undefined,
       imagePending: !!row.RutaLocal && !row.UrlRemota,
+      imageError: row.ImageSyncEstado === "error" ? "No se pudo subir la fotografía. Sigue guardada en el teléfono." : undefined,
       createdAt: new Date(String(row.FechaPublicacion)).getTime(),
       syncStatus: row.SyncEstado,
       comments:
@@ -253,7 +256,7 @@ async function savePost(post: Post, action: "crear" | "actualizar"): Promise<voi
   if (post.image)
     statements.push({
       statement: `INSERT INTO ImagenesPublicacion (IdImagen,IdPublicacion,RutaLocal,UrlRemota,Orden,SyncEstado)
-    VALUES (?,?,?,?,0,?) ON CONFLICT(IdImagen) DO UPDATE SET UrlRemota=CASE WHEN RutaLocal=excluded.RutaLocal THEN UrlRemota ELSE excluded.UrlRemota END,SyncEstado=CASE WHEN RutaLocal=excluded.RutaLocal THEN SyncEstado ELSE excluded.SyncEstado END,RutaLocal=excluded.RutaLocal;`,
+    VALUES (?,?,?,?,0,?) ON CONFLICT(IdImagen) DO UPDATE SET UrlRemota=CASE WHEN RutaLocal=excluded.RutaLocal THEN UrlRemota ELSE excluded.UrlRemota END,SyncEstado=CASE WHEN RutaLocal=excluded.RutaLocal THEN SyncEstado ELSE excluded.SyncEstado END,RutaLocal=CASE WHEN excluded.RutaLocal IS NULL AND UrlRemota=excluded.UrlRemota THEN RutaLocal ELSE excluded.RutaLocal END;`,
       values: [
         `img-${post.id}`,
         payload.id,

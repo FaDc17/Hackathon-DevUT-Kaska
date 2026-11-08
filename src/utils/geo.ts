@@ -2,6 +2,7 @@ import { Capacitor } from "@capacitor/core";
 import { Geolocation } from "@capacitor/geolocation";
 
 export type LatLng = { lat: number; lng: number };
+export const PERU_OVERVIEW_CENTER: LatLng = { lat: -9.19, lng: -75.015 };
 
 /** Centro aproximado de cada distrito de Lima (para centrar el mapa y como respaldo). */
 export const DISTRICT_CENTERS: Record<string, LatLng> = {
@@ -40,9 +41,9 @@ const norm = (s: string) =>
     .trim();
 
 export function districtCenter(district?: string): LatLng {
-  if (!district) return LIMA_CENTER;
+  if (!district || norm(district) === "sin especificar") return PERU_OVERVIEW_CENTER;
   const key = Object.keys(DISTRICT_CENTERS).find((d) => norm(d) === norm(district));
-  return key ? DISTRICT_CENTERS[key] : LIMA_CENTER;
+  return key ? DISTRICT_CENTERS[key] : PERU_OVERVIEW_CENTER;
 }
 
 /** Redondea a 3 decimales (~100 m) para no exponer un punto exacto. */
@@ -62,19 +63,14 @@ export function coordsOf(item: {
   district?: string;
   lat?: number;
   lng?: number;
-}): LatLng {
-  if (typeof item.lat === "number" && typeof item.lng === "number") {
-    return { lat: item.lat, lng: item.lng };
+}): LatLng | null {
+  if (item.district?.trim().toLocaleLowerCase("es") === "sin especificar") return null;
+  if (typeof item.lat === "number" && typeof item.lng === "number" &&
+    Number.isFinite(item.lat) && Number.isFinite(item.lng) &&
+    Math.abs(item.lat) <= 90 && Math.abs(item.lng) <= 180) {
+    return roundPoint({ lat: item.lat, lng: item.lng });
   }
-  const c = districtCenter(item.district);
-  // This number only offsets overlapping markers; the original record ID is preserved.
-  const markerSeed =
-    typeof item.id === "number"
-      ? item.id
-      : [...item.id].reduce((value, char) => (value * 31 + char.charCodeAt(0)) | 0, 0);
-  const h = Math.abs(Math.sin(markerSeed * 12.9898) * 43758.5453) % 1;
-  const h2 = Math.abs(Math.sin(markerSeed * 78.233) * 12345.6789) % 1;
-  return roundPoint({ lat: c.lat + (h - 0.5) * 0.011, lng: c.lng + (h2 - 0.5) * 0.011 });
+  return null;
 }
 
 /** Ubicación actual del dispositivo (Capacitor en Android, navegador en web). */

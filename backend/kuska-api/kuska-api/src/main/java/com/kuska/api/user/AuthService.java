@@ -36,9 +36,13 @@ public class AuthService {
 
 	@Transactional
 	public UserDtos.AuthResponse register(UserDtos.RegisterRequest request) {
-		validatePassword(request.password());
-		if (usuarios.existsByNombreUsuarioIgnoreCase(request.username())
-				|| usuarios.existsByCelular(request.phone())) {
+		RegistrationValidation.password(request.password());
+		// Older clients do not send confirmation; when supplied it must match exactly.
+		if (request.confirmPassword() != null && !request.password().equals(request.confirmPassword()))
+			throw new IllegalArgumentException("Las contraseñas no coinciden.");
+		String phone = RegistrationValidation.phone(request.phone());
+		if (usuarios.existsByNombreUsuarioIgnoreCase(request.username().trim())
+				|| usuarios.existsByCelular(phone)) {
 			throw new DuplicateUserException();
 		}
 
@@ -49,7 +53,7 @@ public class AuthService {
 		usuario.setId(UUID.randomUUID().toString());
 		usuario.setNombreUsuario(request.username().trim());
 		usuario.setContrasenaHash(passwordEncoder.encode(request.password()));
-		usuario.setCelular(request.phone());
+		usuario.setCelular(phone);
 		usuario.setDireccionPrivada(request.address().trim());
 		usuario.setDistrito(distrito);
 		usuario.setDescripcionPerfil(normalizeAbout(request.about()));
@@ -74,6 +78,18 @@ public class AuthService {
 	@Transactional(readOnly = true)
 	public UserDtos.PublicUser profile(String userId) {
 		return toPublicUser(findActiveUser(userId));
+	}
+
+	@Transactional(readOnly = true)
+	public UserDtos.AuthResponse renew(String userId, String token) {
+		Usuario usuario = findActiveUser(userId);
+		try {
+			String renewed = jwtService.renewAccessToken(token,
+				new JwtService.UsuarioTokenSubject(usuario.getId(), usuario.getNombreUsuario()));
+			return new UserDtos.AuthResponse(renewed, "Bearer", jwtService.getExpirationSeconds(), toPublicUser(usuario));
+		} catch (IllegalArgumentException failure) {
+			throw new BadCredentialsException("La sesión venció. Inicia sesión nuevamente.");
+		}
 	}
 
 	@Transactional(readOnly = true)
@@ -109,8 +125,9 @@ public class AuthService {
 	@Transactional
 	public UserDtos.PublicUser updateProfile(String userId, UserDtos.ProfileUpdateRequest request) {
 		Usuario usuario = findActiveUser(userId);
+		String phone = RegistrationValidation.phone(request.phone());
 		if (usuarios.existsByNombreUsuarioIgnoreCaseAndIdNot(request.username().trim(), userId)
-				|| usuarios.existsByCelularAndIdNot(request.phone(), userId)) {
+				|| usuarios.existsByCelularAndIdNot(phone, userId)) {
 			throw new DuplicateUserException();
 		}
 		Distrito distrito = distritos.findById(request.districtId())
@@ -118,7 +135,7 @@ public class AuthService {
 						"El distrito indicado no existe."));
 
 		usuario.setNombreUsuario(request.username().trim());
-		usuario.setCelular(request.phone());
+		usuario.setCelular(phone);
 		usuario.setDireccionPrivada(request.address().trim());
 		usuario.setDistrito(distrito);
 		usuario.setDescripcionPerfil(normalizeAbout(request.about()));
@@ -153,13 +170,16 @@ public class AuthService {
 				.orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado."));
 	}
 
-	private void validatePassword(String password) {
-		if (password.getBytes(StandardCharsets.UTF_8).length > 72
-				|| password.chars().noneMatch(Character::isLetter)
-				|| password.chars().noneMatch(Character::isDigit)) {
-			throw new IllegalArgumentException(
-					"La contraseña debe tener entre 8 y 72 bytes e incluir letras y números.");
-		}
+	@Transactional
+	public void changePassword(String userId, UserDtos.PasswordChangeRequest request) {
+		Usuario usuario = findActiveUser(userId);
+		if (!passwordEncoder.matches(request.currentPassword(), usuario.getContrasenaHash()))
+			throw new AccountVerificationException();
+		RegistrationValidation.password(request.newPassword());
+		if (!request.newPassword().equals(request.confirmPassword()))
+			throw new IllegalArgumentException("Las contraseñas no coinciden.");
+		usuario.setContrasenaHash(passwordEncoder.encode(request.newPassword()));
+		usuarios.saveAndFlush(usuario);
 	}
 
 	private String normalizeAbout(String about) {
