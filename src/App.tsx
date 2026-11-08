@@ -118,14 +118,8 @@ function normalizeServices(
             ?.id,
       })),
       priceLabel: hasValidPrice ? service.priceLabel : defaultPriceRange.label,
-      priceMin:
-        hasValidPrice && typeof service.priceMin === "number"
-          ? service.priceMin
-          : defaultPriceRange.min,
-      priceMax:
-        hasValidPrice && typeof service.priceMax === "number"
-          ? service.priceMax
-          : defaultPriceRange.max,
+      priceMin: hasValidPrice ? service.priceMin : defaultPriceRange.min,
+      priceMax: hasValidPrice ? service.priceMax : defaultPriceRange.max,
       currency: "PEN",
       district:
         service.district ||
@@ -231,6 +225,7 @@ export default function App() {
         setAccounts(await listUsers());
         setSessionId(restoredUser.id);
         setScreen("home");
+        refreshFeed();
         void syncPendingProfileUpdates();
       }
     })().catch((error: unknown) => {
@@ -254,9 +249,11 @@ export default function App() {
     };
     window.addEventListener("kuska:unauthorized", handleUnauthorized);
     window.addEventListener("online", retryPending);
+    window.addEventListener("kuska:sync-pending", retryPending);
     return () => {
       window.removeEventListener("kuska:unauthorized", handleUnauthorized);
       window.removeEventListener("online", retryPending);
+      window.removeEventListener("kuska:sync-pending", retryPending);
     };
   }, [isNativePlatform]);
   useEffect(() => {
@@ -314,6 +311,17 @@ export default function App() {
   const selectedServiceData = services.find((s) => s.id === selectedService) || services[0];
   const selectedPostData = posts.find((p) => p.id === selectedPost) || posts[0];
   const notify = (message: string) => setToast(message);
+  const refreshFeed = () => {
+    void Promise.all([listServices(), listPosts()])
+      .then(([nextServices, nextPosts]) => {
+        setServices(nextServices);
+        setPosts(nextPosts);
+      })
+      .catch((error: unknown) => {
+        console.error("No se pudo actualizar el contenido remoto:", error);
+        notify("No se pudo actualizar el contenido remoto. Se conservan los datos locales.");
+      });
+  };
   const acceptAuthenticatedUser = async (response: AuthResponse) => {
     if (!isNativePlatform) {
       await saveSecureSession({ accessToken: response.accessToken, userId: response.user.id });
@@ -332,6 +340,7 @@ export default function App() {
     setSessionId(authenticatedUser.id);
     setHistory([]);
     setScreen("home");
+    refreshFeed();
     void syncPendingProfileUpdates();
   };
   const loginLocallyForDevelopment = async (username: string, password: string) => {

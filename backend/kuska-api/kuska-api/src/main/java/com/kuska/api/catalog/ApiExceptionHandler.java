@@ -5,15 +5,18 @@ import java.time.Instant;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.kuska.api.user.DuplicateUserException;
+import com.kuska.api.content.ResourceConflictException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -46,6 +49,21 @@ public class ApiExceptionHandler {
 				Instant.now(), HttpStatus.BAD_REQUEST.value(), "VALIDATION_ERROR", message));
 	}
 
+	@ExceptionHandler(HttpMessageNotReadableException.class)
+	public ResponseEntity<ErrorResponse> handleUnreadableBody(HttpMessageNotReadableException exception) {
+		return ResponseEntity.badRequest().body(new ErrorResponse(
+				Instant.now(), HttpStatus.BAD_REQUEST.value(), "VALIDATION_ERROR",
+				"La solicitud contiene un cuerpo JSON inválido."));
+	}
+
+	@ExceptionHandler(jakarta.validation.ConstraintViolationException.class)
+	public ResponseEntity<ErrorResponse> handleConstraintViolation(
+			jakarta.validation.ConstraintViolationException exception) {
+		return ResponseEntity.badRequest().body(new ErrorResponse(
+				Instant.now(), HttpStatus.BAD_REQUEST.value(), "VALIDATION_ERROR",
+				"La solicitud excede los límites permitidos."));
+	}
+
 	@ExceptionHandler(BadCredentialsException.class)
 	public ResponseEntity<ErrorResponse> handleBadCredentials(BadCredentialsException exception) {
 		return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(new ErrorResponse(
@@ -64,6 +82,19 @@ public class ApiExceptionHandler {
 		return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponse(
 				Instant.now(), HttpStatus.CONFLICT.value(), "DATA_CONFLICT",
 				"Los datos entran en conflicto con un registro existente."));
+	}
+
+	@ExceptionHandler(ResourceConflictException.class)
+	public ResponseEntity<ErrorResponse> handleResourceConflict(ResourceConflictException exception) {
+		return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponse(
+				Instant.now(), HttpStatus.CONFLICT.value(), "DATA_CONFLICT", exception.getMessage()));
+	}
+
+	@ExceptionHandler(AccessDeniedException.class)
+	public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException exception) {
+		return ResponseEntity.status(HttpStatus.FORBIDDEN).body(new ErrorResponse(
+				Instant.now(), HttpStatus.FORBIDDEN.value(), "FORBIDDEN",
+				"No tienes permiso para realizar esta operación."));
 	}
 
 	@ExceptionHandler(Exception.class)

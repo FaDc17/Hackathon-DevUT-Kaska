@@ -53,6 +53,7 @@ public class SecurityConfiguration {
 				.authorizeHttpRequests(requests -> requests
 						.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 						.requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
+						.requestMatchers(HttpMethod.GET, "/api/catalogos/**").permitAll()
 						.anyRequest().authenticated())
 				.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
 				.build();
@@ -86,7 +87,7 @@ public class SecurityConfiguration {
 				.map(String::trim)
 				.filter(origin -> !origin.isEmpty())
 				.toList());
-		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "OPTIONS"));
+		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
 		configuration.setAllowedHeaders(List.of(
 				HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE, "X-Operation-Id"));
 		configuration.setAllowCredentials(false);
