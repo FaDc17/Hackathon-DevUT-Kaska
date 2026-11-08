@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { Icon, Header, ServiceCard } from "../../components/common/CommonComponents";
 import { EmptyState } from "../Home/EmptyState";
 import type { Service } from "../../types";
-import { categories } from "../../data/demo";
 import { getServiceCategories, type ServiceCategory } from "../../services/catalogs";
+import { getServiceCategoryIcon } from "../../utils/services";
 
 export function Services({
   services,
@@ -65,7 +65,7 @@ export function Services({
             onClick={() => setCategory(category === label ? "Todos" : label)}
           >
             <span>
-              <Icon name={categories.find(([name]) => name === label)?.[1] || "grid"} />
+              <Icon name={getServiceCategoryIcon(label)} />
             </span>
             <small>{label}</small>
           </button>
