@@ -16,12 +16,29 @@ const CATEGORIAS: Array<[string, RegExp]> = [
   ["clases", /clases|profesor|profesora|tutor|matematic|ensenar|aprender ingles/],
   ["mascotas", /mascota|perro|gato|paseador|veterinari/],
   ["transporte", /transporte|taxi|mudanza|movilidad/],
-  ["hogar", /limpieza|tejido|ropa|arreglos|hogar|casa/],
+  ["hogar", /limpieza|tejido|ropa|arreglos|hogar/],
   ["jardineria", /jardin|jardinero|plantas|podar|poda/],
   ["belleza", /belleza|peluquer|manicur|maquillaje|corte de cabello/],
-  ["tecnologia", /tecnologia|computador|laptop|reparar celular|soporte tecnico/],
+  [
+    "tecnologia",
+    /tecnologia|computador|laptop|(?:reparar|arreglar|reparacion(?: de)?|arreglo(?: de)?)\s+(?:(?:mi|un|el|tu|su)\s+)?(?:celular|telefono)|soporte tecnico/,
+  ],
   ["eventos", /eventos|animacion|decoracion|fiestas/],
 ];
+
+function consultaAfirmativa(consulta: string): string {
+  return normalizar(consulta).replace(
+    /\b(?:no\s+(?:(?:quiero|necesito|busco|deseo|estoy buscando)\s+)?|excepto\s+|sin\s+)(?!mas de\b)(.*?)(?=[,.;!?]|\b(?:pero|sino|necesito|busco|quiero)\b|$)/g,
+    " ",
+  );
+}
+
+/** Reconoce el oficio pedido, dejando fuera los oficios rechazados explícitamente. */
+export function categoriaDeConsulta(consulta: string): string | null {
+  const q = consultaAfirmativa(consulta);
+  return CATEGORIAS.find(([, pattern]) => pattern.test(q))?.[0] ?? null;
+}
+
 const STOP = new Set([
   "quiero",
   "busco",
@@ -73,11 +90,26 @@ const STOP = new Set([
   "maximo",
   "presupuesto",
   "debajo",
+  "entre",
+  "experiencia",
+  "domicilio",
 ]);
 
 export function seccionSolicitada(consulta: string): Screen | null {
   const q = normalizar(consulta);
   if (/perfil (?:del |de un )?proveedor|perfil del dueno/.test(q)) return null;
+  if (
+    /\b(?:contacto|telefono|whatsapp|primer[oa]?|segund[oa]|tercer[oa]?|cuart[oa]|quint[oa])\b/.test(
+      q,
+    )
+  )
+    return null;
+  if (
+    /^(?:muestrame|mostrar|quiero ver)\b/.test(q) &&
+    categoriaDeConsulta(q) &&
+    !/\b(?:mapa|seccion|pantalla)\b/.test(q)
+  )
+    return null;
   // Una búsqueda con lugar, oficio o presupuesto debe devolver resultados, aunque empiece con "muéstrame".
   if (
     /servicios?|gasfiter|electric|carpinter/.test(q) &&
@@ -96,7 +128,7 @@ export function seccionSolicitada(consulta: string): Screen | null {
   if (/perfil|mis datos|mi cuenta/.test(q)) return "profile";
   if (/comunidad|solidaridad|necesidad|publicacion/.test(q)) return "solidarity";
   if (/mapa|ubicaciones/.test(q)) return "map";
-  if (/servicios?|gasfiter|electricidad|carpinteria/.test(q)) return "services";
+  if (/\bservicios?\b/.test(q)) return "services";
   if (/tutorial|aprender a usar|asistente/.test(q)) return "assistant";
   if (/inicio|pantalla principal/.test(q)) return "home";
   return null;
@@ -116,8 +148,21 @@ export function nombreSeccion(destino: Screen): string {
   return nombres[destino] ?? "Inicio";
 }
 
-export function extraerPresupuesto(consulta: string): { max: number | null; estricto: boolean } {
+export function extraerPresupuesto(consulta: string): {
+  max: number | null;
+  estricto: boolean;
+  min?: number;
+} {
   const q = normalizar(consulta);
+  const intervalo = q.match(
+    /\b(?:entre|de)\s*(?:s\s*\/\s*)?(\d+(?:[.,]\d{1,2})?)\s*(?:soles\s*)?(?:y|a)\s*(?:s\s*\/\s*)?(\d+(?:[.,]\d{1,2})?)\b/,
+  );
+  if (intervalo) {
+    const min = Number(intervalo[1].replace(",", "."));
+    const max = Number(intervalo[2].replace(",", "."));
+    if (min >= 0 && min <= max && max <= 100000) return { min, max, estricto: false };
+    return { max: null, estricto: false };
+  }
   const m =
     q.match(
       /(menos de|por debajo de|hasta|maximo(?: de)?|no mas de|presupuesto de)\s*(?:s\s*\/\s*)?(\d+(?:[.,]\d{1,2})?)/,
@@ -131,12 +176,18 @@ export function extraerPresupuesto(consulta: string): { max: number | null; estr
     : { max: null, estricto: false };
 }
 
-function distritoDeConsulta(
+export function distritoDeConsulta(
   consulta: string,
   distritoUsuario: string,
   disponibles: string[],
 ): string {
-  const q = normalizar(consulta);
+  // "En casa" describe el lugar del trabajo, no un distrito distinto.
+  const q = normalizar(consulta)
+    .replace(/\ben\s+(?:(?:mi|la|su|tu|el)\s+)?(?:casa|hogar|domicilio)\b/g, " ")
+    .replace(
+      /\b(?:experiencia|especialista|especializado|especializada|experto|experta)\s+en\b/g,
+      " ",
+    );
   const conocidos = Array.from(
     new Set([
       ...disponibles,
@@ -155,8 +206,8 @@ function distritoDeConsulta(
     .filter(Boolean)
     .sort((a, b) => b.length - a.length);
   const conocido = conocidos.find((d) => {
-    const x = normalizar(d);
-    return q.includes(`en ${x}`) || q.includes(`distrito de ${x}`);
+    const x = normalizar(d).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`\\b(?:en(?: el distrito de)?|distrito de)\\s+${x}(?=$|[^a-z0-9])`).test(q);
   });
   if (conocido) return conocido;
   if (/\b(?:mi distrito|mi zona|cerca de mi)\b/.test(q)) return distritoUsuario;
@@ -182,19 +233,28 @@ export function buscarServiciosLocales(
   distritoUsuario: string,
   distritoUsuarioId?: number,
 ): Service[] {
-  const q = normalizar(consulta);
+  const q = consultaAfirmativa(consulta);
+  if (
+    !q ||
+    /^(?:hola|buenos dias|buenas tardes|buenas noches|gracias|muchas gracias|si|no|ok|vale)[\s!?.]*$/.test(
+      q,
+    )
+  )
+    return [];
   // Si la persona busca donaciones, priorizamos Comunidad y no confundimos una oferta de arreglos con una donación.
   if (/donar|donando|dono|regal/.test(q) && !/servicio|trabajo|arreglo/.test(q)) return [];
-  const categoria = CATEGORIAS.find(([, re]) => re.test(q))?.[0] ?? null;
+  const categoria = categoriaDeConsulta(consulta);
   const distrito = distritoDeConsulta(
     consulta,
     distritoUsuario,
     services.map((s) => s.district),
   );
   const presupuesto = extraerPresupuesto(consulta);
-  const tokens = palabras(consulta).filter(
+  const tokens = palabras(q).filter(
     (token) => !palabras(distrito).includes(token) && !/^\d+$/.test(token),
   );
+  // Un presupuesto o una confirmación por sí solos necesitan contexto del chat.
+  if (!categoria && tokens.length === 0 && !/\bservicios?\b/.test(q)) return [];
   return services
     .filter((s) => {
       if (s.isDemo === true) return false;
@@ -220,6 +280,13 @@ export function buscarServiciosLocales(
           !Number.isFinite(s.priceMax) ||
           s.priceMax < 0 ||
           (presupuesto.estricto ? s.priceMax >= presupuesto.max : s.priceMax > presupuesto.max))
+      )
+        return false;
+      if (
+        presupuesto.min !== undefined &&
+        (typeof s.priceMin !== "number" ||
+          !Number.isFinite(s.priceMin) ||
+          s.priceMin < presupuesto.min)
       )
         return false;
       if (!categoria && tokens.length > 0 && !tokens.some((t) => contenido.includes(t)))
@@ -251,7 +318,7 @@ export function buscarServiciosInterpretados(
   let interpreted = consulta;
   let candidates = services;
   // Los límites explícitos de la persona tienen prioridad sobre la interpretación remota.
-  if (!CATEGORIAS.some(([, pattern]) => pattern.test(q)) && typeof intent.categoria === "string") {
+  if (!categoriaDeConsulta(q) && typeof intent.categoria === "string") {
     const category = normalizar(intent.categoria);
     if (services.some((s) => normalizar(s.category) === category)) {
       interpreted += ` ${category}`;

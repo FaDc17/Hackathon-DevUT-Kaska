@@ -1,0 +1,101 @@
+.agent-chat-page .kuska-chat-status {
+  display: block;
+  margin-top: 3px;
+  color: #52656b;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.agent-chat-page .kuska-chat-offline {
+  background: #94a3b8;
+  box-shadow: 0 0 0 4px #e2e8f0;
+}
+.agent-chat-page .kuska-chat-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #52656b;
+  font-size: 11px;
+}
+.agent-chat-page .kuska-chat-toolbar button {
+  min-height: 44px;
+  padding: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #265e55;
+  font-size: 11px;
+  cursor: pointer;
+}
+.agent-chat-page .kuska-chat-memory-note {
+  margin: 0 0 20px;
+  color: #52656b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.agent-chat-page .chat-message p {
+  white-space: pre-wrap;
+}
+.agent-chat-page .chat-message small {
+  font-size: 10px;
+  line-height: 1.4;
+}
+.agent-chat-page .kuska-chat-result {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid #d6e6e2;
+  border-radius: 12px;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.agent-chat-page .kuska-chat-result strong {
+  display: block;
+}
+.agent-chat-page .kuska-chat-result-number {
+  display: block;
+  color: #52656b;
+  font-size: 10px;
+}
+.agent-chat-page .kuska-chat-action {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 7px;
+  padding: 9px 10px;
+  border: 1px solid #c6e6df;
+  border-radius: 12px;
+  background: #d9f3ee;
+  color: #0f172a;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.agent-chat-page .kuska-chat-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.agent-chat-page .kuska-chat-suggestions button {
+  min-height: 44px;
+  padding: 8px 11px;
+  border: 1px solid #c8ded9;
+  border-radius: 14px;
+  background: #f5fbf9;
+  color: #265e55;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.agent-chat-page .kuska-chat-toolbar button:disabled,
+.agent-chat-page .kuska-chat-suggestions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.agent-chat-page button:focus-visible {
+  outline: 2px solid #366b60;
+  outline-offset: 3px;
+}
