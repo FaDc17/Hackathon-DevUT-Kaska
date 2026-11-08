@@ -31,19 +31,18 @@ import { BottomNav, Icon } from "./components/common/CommonComponents";
 import type { Post, Screen, Service, User } from "./types";
 
 import { defaultPriceRange, initialPosts, initialServices, initialUsers, priceRanges } from "./data/demo";
-
-
-function loadAccounts() {
-  try {
-    const stored = JSON.parse(localStorage.getItem("kuska-accounts") || "[]") as User[];
-    return [
-      ...initialUsers,
-      ...stored.filter((item) => !initialUsers.some((seed) => seed.id === item.id)),
-    ];
-  } catch {
-    return initialUsers;
-  }
-}
+import { seedDemoData } from "./database/seed";
+import {
+  districtIdByName,
+  getSavedSession,
+  listUsers,
+  saveSession,
+} from "./database/repositories/users";
+import { addReview, createService, listServices } from "./database/repositories/services";
+import { addComment, createPost, listPosts } from "./database/repositories/posts";
+import { register as registerOnline } from "./services/auth";
+import { closeSession, establishSession, restoreSession, updateProfileOnlineOrQueue } from "./services/session";
+import { syncPendingProfileUpdates } from "./services/sync";
 
 function normalizeServices(
   items: Array<Service & { price?: string }>,
@@ -120,25 +119,13 @@ function normalizePosts(items: Post[]): Post[] {
 }
 
 export default function App() {
-  const [accounts, setAccounts] = useState<User[]>(loadAccounts);
-  const [sessionId, setSessionId] = useState(() => localStorage.getItem("kuska-session") || "");
+  const [accounts, setAccounts] = useState<User[]>([]);
+  const [sessionId, setSessionId] = useState("");
   const user = accounts.find((account) => account.id === sessionId) || null;
-  const [screen, setScreen] = useState<Screen>(() => (sessionId ? "home" : "login"));
+  const [screen, setScreen] = useState<Screen>("login");
   const [history, setHistory] = useState<Screen[]>([]);
-  const [services, setServices] = useState<Service[]>(() => {
-    try {
-      return normalizeServices(JSON.parse(localStorage.getItem("kuska-services") || ""), accounts);
-    } catch {
-      return initialServices;
-    }
-  });
-  const [posts, setPosts] = useState<Post[]>(() => {
-    try {
-      return normalizePosts(JSON.parse(localStorage.getItem("kuska-posts") || ""));
-    } catch {
-      return initialPosts;
-    }
-  });
+  const [services, setServices] = useState<Service[]>([]);
+  const [posts, setPosts] = useState<Post[]>([]);
   const [selectedService, setSelectedService] = useState<number>(1);
   const [selectedPost, setSelectedPost] = useState<number>(1);
   const [selectedNeighborId, setSelectedNeighborId] = useState("");
@@ -152,19 +139,52 @@ export default function App() {
   );
 
   useEffect(() => {
-    localStorage.removeItem("kuska-user");
-    localStorage.removeItem("kuska-usernames");
+    let active = true;
+    void (async () => {
+      await seedDemoData();
+      const [storedAccounts, storedServices, storedPosts, savedSession] = await Promise.all([
+        listUsers(),
+        listServices(),
+        listPosts(),
+        getSavedSession(),
+      ]);
+      if (!active) return;
+      setAccounts(storedAccounts);
+      setServices(storedServices);
+      setPosts(storedPosts);
+      if (savedSession) {
+        const restoredUser = await restoreSession();
+        if (!active || !restoredUser) return;
+        setAccounts(await listUsers());
+        setSessionId(restoredUser.id);
+        setScreen("home");
+        void syncPendingProfileUpdates();
+      }
+    })().catch((error: unknown) => {
+      console.error("No se pudo restaurar Kuska:", error);
+      if (active) notify("No se pudo cargar la sesión local. Tus datos permanecen guardados.");
+    });
+    return () => { active = false; };
   }, []);
   useEffect(() => {
-    const registered = accounts.filter((account) => account.passwordHash);
-    localStorage.setItem("kuska-accounts", JSON.stringify(registered));
-  }, [accounts]);
-  useEffect(() => {
-    if (sessionId && user) localStorage.setItem("kuska-session", sessionId);
-    else localStorage.removeItem("kuska-session");
-  }, [sessionId, user]);
-  useEffect(() => localStorage.setItem("kuska-services", JSON.stringify(services)), [services]);
-  useEffect(() => localStorage.setItem("kuska-posts", JSON.stringify(posts)), [posts]);
+    const handleUnauthorized = () => {
+      void saveSession(null).finally(() => {
+        setSessionId("");
+        setHistory([]);
+        setScreen("login");
+        notify("Tu sesión venció. Inicia sesión nuevamente.");
+      });
+    };
+    const retryPending = () => {
+      void syncPendingProfileUpdates();
+    };
+    window.addEventListener("kuska:unauthorized", handleUnauthorized);
+    window.addEventListener("online", retryPending);
+    return () => {
+      window.removeEventListener("kuska:unauthorized", handleUnauthorized);
+      window.removeEventListener("online", retryPending);
+    };
+  }, []);
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(""), 2800);
@@ -209,6 +229,31 @@ export default function App() {
   const selectedServiceData = services.find((s) => s.id === selectedService) || services[0];
   const selectedPostData = posts.find((p) => p.id === selectedPost) || posts[0];
   const notify = (message: string) => setToast(message);
+  const acceptAuthenticatedUser = async (response: Awaited<ReturnType<typeof registerOnline>>) => {
+    const authenticatedUser = await establishSession(response);
+    setAccounts(await listUsers());
+    setSessionId(authenticatedUser.id);
+    setHistory([]);
+    setScreen("home");
+    void syncPendingProfileUpdates();
+  };
+  const registerUser = async (input: {
+    username: string;
+    password: string;
+    address: string;
+    phone: string;
+    district: string;
+  }) => {
+    const districtId = await districtIdByName(input.district);
+    const response = await registerOnline({
+      username: input.username,
+      password: input.password,
+      address: input.address,
+      phone: input.phone,
+      districtId,
+    });
+    await acceptAuthenticatedUser(response);
+  };
   const showNav =
     !!user &&
     !["login", "register", "recover", "home", "assistant", "agentChat", "tutorial"].includes(
@@ -220,42 +265,26 @@ export default function App() {
     if (screen === "login")
       return (
         <AuthScreen
-          accounts={accounts}
           go={go}
           notify={notify}
-          onLogin={(id) => {
-            setSessionId(id);
-            setHistory([]);
-            setScreen("home");
-          }}
+          onLogin={acceptAuthenticatedUser}
         />
       );
     if (screen === "register")
       return (
         <RegisterScreen
-          accounts={accounts}
           go={go}
           notify={notify}
-          onRegister={(account) => {
-            setAccounts((current) => [...current, account]);
-            setSessionId(account.id);
-            setHistory([]);
-            setScreen("home");
-          }}
+          onRegister={registerUser}
         />
       );
     if (screen === "recover") return <RecoverScreen go={go} notify={notify} />;
     if (!user)
       return (
         <AuthScreen
-          accounts={accounts}
           go={go}
           notify={notify}
-          onLogin={(id) => {
-            setSessionId(id);
-            setHistory([]);
-            setScreen("home");
-          }}
+          onLogin={acceptAuthenticatedUser}
         />
       );
     if (screen === "home")
@@ -321,13 +350,9 @@ export default function App() {
           user={user}
           back={back}
           onComment={(comment) => {
-            setPosts((current) =>
-              current.map((post) =>
-                post.id === selectedPost
-                  ? { ...post, comments: [...(post.comments || []), comment] }
-                  : post,
-              ),
-            );
+          void addComment(selectedPost, comment).then(async () => {
+            setPosts(await listPosts());
+          }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
             notify("Comentario publicado");
           }}
           openProfile={openProfile}
@@ -356,10 +381,12 @@ export default function App() {
           openAbout={() => setModal("about")}
           edit={() => setModal("edit")}
           logout={() => {
-            setSessionId("");
-            setHistory([]);
-            setScreen("login");
-            notify("Sesión cerrada de forma segura");
+            void closeSession().finally(() => {
+              setSessionId("");
+              setHistory([]);
+              setScreen("login");
+              notify("Sesión cerrada de forma segura");
+            });
           }}
         />
       );
@@ -420,7 +447,9 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(service) => {
-              setServices((s) => [service, ...s]);
+              void createService(service, service.image).then(async () => {
+                setServices(await listServices());
+              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
               setModal(null);
               notify("Tu servicio ya está visible");
               setCategory("Todos");
@@ -432,7 +461,9 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(post) => {
-              setPosts((p) => [post, ...p]);
+              void createPost(post, post.image).then(async () => {
+                setPosts(await listPosts());
+              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
               setModal(null);
               notify("Publicación compartida con tu comunidad");
             }}
@@ -443,7 +474,9 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(post) => {
-              setPosts((p) => [post, ...p]);
+              void createPost(post, post.image).then(async () => {
+                setPosts(await listPosts());
+              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
               setModal(null);
               notify("Alerta vecinal publicada");
             }}
@@ -454,11 +487,9 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(review) => {
-              setServices((all) =>
-                all.map((s) =>
-                  s.id === selectedService ? { ...s, reviews: [...s.reviews, review] } : s,
-                ),
-              );
+              void addReview(selectedService, review).then(async () => {
+                setServices(await listServices());
+              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
               setModal(null);
               notify("Gracias por compartir tu experiencia");
             }}
@@ -473,6 +504,14 @@ export default function App() {
               setAccounts((current) =>
                 current.map((account) => (account.id === user.id ? next : account)),
               );
+              void updateProfileOnlineOrQueue(next).then(async (saved) => {
+                setAccounts(await listUsers());
+                notify(saved.syncStatus === "pendiente"
+                  ? "Perfil guardado localmente; sincronización pendiente"
+                  : "Perfil actualizado y sincronizado");
+              }).catch((error: unknown) => {
+                notify(error instanceof Error ? error.message : "No se pudo actualizar el perfil.");
+              });
               setServices((current) =>
                 current.map((service) => ({
                   ...service,
@@ -494,7 +533,6 @@ export default function App() {
               );
               if (previousName !== next.name) notify("Perfil y autoría actualizados");
               setModal(null);
-              notify("Perfil actualizado");
             }}
           />
         )}
@@ -508,8 +546,15 @@ export default function App() {
                   account.id === user.id ? { ...account, about } : account,
                 ),
               );
+              void updateProfileOnlineOrQueue({ ...user, about }).then(async (saved) => {
+                setAccounts(await listUsers());
+                notify(saved.syncStatus === "pendiente"
+                  ? "Perfil guardado localmente; sincronización pendiente"
+                  : "Información personal actualizada");
+              }).catch((error: unknown) => {
+                notify(error instanceof Error ? error.message : "No se pudo actualizar el perfil.");
+              });
               setModal(null);
-              notify("Información personal actualizada");
             }}
           />
         )}

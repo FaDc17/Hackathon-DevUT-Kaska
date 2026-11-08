@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
-import { hashPassword } from "../../utils/auth";
 import { Icon, Logo } from "../../components/common/CommonComponents";
 import type { Screen, User } from "../../types";
+import { login, type AuthResponse } from "../../services/auth";
 
 export function AuthScreen({
   accounts,
@@ -13,7 +13,7 @@ export function AuthScreen({
   accounts: User[];
   go: (s: Screen) => void;
   notify: (s: string) => void;
-  onLogin: (id: string) => void;
+  onLogin: (response: AuthResponse) => Promise<void>;
 }) {
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
@@ -24,22 +24,16 @@ export function AuthScreen({
     if (!fd.get("user") || !fd.get("password"))
       return setError("Completa tu usuario y contraseña para continuar.");
     setLoading(true);
-    const name = String(fd.get("user")).trim().toLowerCase();
-    const passwordHash = await hashPassword(String(fd.get("password")));
-    const account = accounts.find(
-      (candidate) =>
-        candidate.passwordHash &&
-        candidate.name.toLowerCase() === name &&
-        candidate.passwordHash === passwordHash,
-    );
-    setLoading(false);
-    if (!account) {
-      setError("Usuario o contraseña incorrectos. Inténtalo nuevamente");
-      return;
+    try {
+      const response = await login(String(fd.get("user")).trim(), String(fd.get("password")));
+      await onLogin(response);
+      setError("");
+      notify("¡Qué gusto tenerte de vuelta!");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No fue posible iniciar sesión.");
+    } finally {
+      setLoading(false);
     }
-    setError("");
-    notify("¡Qué gusto tenerte de vuelta!");
-    onLogin(account.id);
   };
   return (
     <section className="auth-screen">
