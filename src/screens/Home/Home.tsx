@@ -11,7 +11,7 @@ export function Home({
   user: User;
   services: Service[];
   go: (s: Screen) => void;
-  openService: (id: number) => void;
+  openService: (id: string | number) => void;
 }) {
   const shortcuts: [Screen, string, string, string, string][] = [
     ["services", "Servicios", "Encuentra expertos", "tools", "blue"],

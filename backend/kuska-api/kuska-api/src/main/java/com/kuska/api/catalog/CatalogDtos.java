@@ -10,6 +10,9 @@ public final class CatalogDtos {
 	public record DepartamentoDto(Integer id, String nombre) {
 	}
 
+	public record ProvinciaDto(Integer idDepartamento, String departamento, String nombre) {
+	}
+
 	public record DistritoDto(Integer id, Integer idDepartamento, String departamento,
 			String provincia, String nombre) {
 	}

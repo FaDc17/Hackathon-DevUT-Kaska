@@ -2,6 +2,8 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { Icon, Logo } from "../../components/common/CommonComponents";
 import type { Screen } from "../../types";
+import { GeographicFields } from "./GeographicFields";
+import type { District } from "../../services/catalogs";
 
 type RegistrationForm = {
   username: string;
@@ -9,6 +11,7 @@ type RegistrationForm = {
   address: string;
   phone: string;
   district: string;
+  districtId: number;
 };
 
 export function RegisterScreen({
@@ -30,6 +33,7 @@ export function RegisterScreen({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [selectedDistrict, setSelectedDistrict] = useState<District>();
   const validateField = (field: keyof typeof values, value: string) => {
     const clean = value.trim();
     if (field === "name") {
@@ -42,10 +46,13 @@ export function RegisterScreen({
     if (field === "password") {
       if (!clean) return "Ingresa una contraseña";
       if (value.length < 8) return "La contraseña debe tener al menos 8 caracteres";
+      if (value.length > 72) return "La contraseña puede tener hasta 72 caracteres";
       if (!/[A-Za-zÁÉÍÓÚáéíóúÑñ]/.test(value) || !/\d/.test(value))
         return "Incluye al menos una letra y un número";
     }
     if (field === "address" && clean.length < 5) return "Ingresa tu dirección";
+    if (field === "address" && clean.length > 300)
+      return "La dirección puede tener hasta 300 caracteres";
     if (field === "phone") {
       if (!value) return "Ingresa tu número de celular";
       if (value.length !== 9) return "El celular debe tener 9 dígitos";
@@ -69,7 +76,7 @@ export function RegisterScreen({
         .filter(([, message]) => message),
     );
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length) return;
+    if (Object.keys(nextErrors).length || !selectedDistrict) return;
     setLoading(true);
     try {
       await onRegister({
@@ -78,6 +85,7 @@ export function RegisterScreen({
         address: values.address.trim(),
         phone: values.phone,
         district: values.district,
+        districtId: selectedDistrict.id,
       });
       notify("Cuenta creada. ¡Bienvenida a Kuska!");
     } catch (reason) {
@@ -123,6 +131,8 @@ export function RegisterScreen({
               onChange={(event) => update("password", event.target.value)}
               onBlur={() => blur("password")}
               type={showPassword ? "text" : "password"}
+              maxLength={72}
+              autoComplete="new-password"
               placeholder="Mínimo 8 caracteres"
             />
             <button
@@ -143,6 +153,7 @@ export function RegisterScreen({
             onChange={(event) => update("address", event.target.value)}
             onBlur={() => blur("address")}
             placeholder="Solo será visible para ti"
+            maxLength={300}
           />
           {errors.address && <span className="field-error">{errors.address}</span>}
         </label>
@@ -158,26 +169,13 @@ export function RegisterScreen({
           />
           {errors.phone && <span className="field-error">{errors.phone}</span>}
         </label>
-        <label>
-          Distrito *
-          <select
-            className={errors.district ? "invalid" : ""}
-            value={values.district}
-            onChange={(event) => update("district", event.target.value)}
-            onBlur={() => blur("district")}
-          >
-            <option value="" disabled>
-              Selecciona tu distrito
-            </option>
-            <option>Pueblo Libre</option>
-            <option>Jesús María</option>
-            <option>Breña</option>
-            <option>Magdalena del Mar</option>
-            <option>San Miguel</option>
-            <option>Bellavista</option>
-          </select>
-          {errors.district && <span className="field-error">{errors.district}</span>}
-        </label>
+        <GeographicFields
+          onChange={(district) => {
+            setSelectedDistrict(district);
+            update("district", district?.nombre || "");
+          }}
+        />
+        {errors.district && <span className="field-error">{errors.district}</span>}
         <button className="primary-button" disabled={loading}>
           {loading ? "Creando cuenta…" : "Crear mi cuenta"}
         </button>

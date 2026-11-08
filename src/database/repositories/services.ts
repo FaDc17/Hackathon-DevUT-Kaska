@@ -1,7 +1,29 @@
-import { getDatabase } from '../connection';
-import { enqueueSyncOperation } from './syncQueue';
-import type { Service, Review } from '../../types';
-import { readRemoteList } from '../../services/remoteRead';
+﻿import { Capacitor } from "@capacitor/core";
+import { getDatabase } from "../connection";
+import type { EntityId, Service, Review } from "../../types";
+import {
+  readRemoteList,
+  amendRemoteCache,
+  wasRemoteReadFresh,
+  upsertRemoteCache,
+  cachedList,
+} from "../../services/remoteRead";
+import { apiRequest } from "../../services/apiClient";
+import { getSecureSession } from "../../services/secureSession";
+import {
+  isRemoteImage,
+  browserImage,
+  saveBrowserImage,
+  removeBrowserImage,
+} from "../../services/images";
+import {
+  commitPending,
+  contentQueue,
+  localCatalogId,
+  requireOwner,
+  resolveCatalogId,
+  isKnownDemoOwner,
+} from "./contentShared";
 
 type RemoteService = {
   id: string;
@@ -9,6 +31,8 @@ type RemoteService = {
   owner: string;
   phone: string;
   district: string;
+  districtId?: number;
+  categoryId: number;
   category: string;
   title: string;
   description: string;
@@ -18,7 +42,7 @@ type RemoteService = {
   latitude: number | null;
   longitude: number | null;
   publishedAt: string;
-  images: Array<{ url: string }>;
+  images: Array<{ id: string; url: string }>;
   reviews: Array<{
     id: string;
     userId: string;
@@ -29,149 +53,163 @@ type RemoteService = {
   }>;
 };
 
-type ServiceRow = {
-  IdServicio: string;
-  IdUsuario: string;
-  NombreUsuario: string;
-  Celular: string;
-  NombreCategoria: string;
-  NombreDistrito: string;
-  Titulo: string;
-  Descripcion: string;
-  PrecioMinimo: number | null;
-  PrecioMaximo: number | null;
-  UbicacionAproximada: string | null;
-  Latitud: number | null;
-  Longitud: number | null;
-  FechaPublicacion: string;
-  RutaLocal: string | null;
-  UrlRemota: string | null;
-};
-
-function uiId(value: string): number {
-  const numeric = Number(value);
-  return /^\d+$/.test(value) ? numeric : Math.abs(
-    Array.from(value).reduce((hash, char) => ((hash * 31) + char.charCodeAt(0)) | 0, 0),
-  );
+function priceLabel(min: number | null, max: number | null): string {
+  if (min == null && max == null) return "Precio por coordinar";
+  if (max == null) return `Más de S/ ${min}`;
+  return `S/ ${min ?? 0} – S/ ${max}`;
 }
 
-async function categoryId(db: Awaited<ReturnType<typeof getDatabase>>, category: string): Promise<number> {
-  const categories = await db.query('SELECT IdCategoria, NombreCategoria FROM CategoriasServicio;');
-  const normalize = (value: string) =>
-    value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-  const result = categories.values?.find(
-    (row) => normalize(String(row.NombreCategoria)) === normalize(category),
-  );
-  if (result) return Number(result.IdCategoria);
-  throw new Error(`Categoria no disponible: ${category}`);
+function fromRemote(service: RemoteService): Service {
+  return {
+    id: service.id,
+    owner: service.owner,
+    ownerId: service.ownerId,
+    isDemo: isKnownDemoOwner(service.ownerId),
+    title: service.title,
+    description: service.description,
+    categoryId: service.categoryId,
+    category: service.category,
+    priceLabel: priceLabel(service.priceMin, service.priceMax),
+    priceMin: service.priceMin,
+    priceMax: service.priceMax,
+    currency: "PEN",
+    district: service.district,
+    districtId: service.districtId,
+    createdAt: new Date(service.publishedAt).getTime(),
+    contactPhone: service.phone,
+    location: service.location || service.district,
+    lat: service.latitude ?? undefined,
+    lng: service.longitude ?? undefined,
+    image: service.images[0]?.url || "",
+    syncStatus: "sincronizado",
+    reviews: service.reviews.map((review) => ({
+      id: review.id,
+      user: review.username,
+      userId: review.userId,
+      stars: review.rating,
+      comment: review.comment || "",
+      date: review.createdAt,
+    })),
+  };
 }
 
 export async function listServices(): Promise<Service[]> {
-  const remoteServices = await readRemoteList<RemoteService>('/api/servicios');
-  if (remoteServices) {
-    return remoteServices.map((service) => ({
-      id: uiId(service.id),
-      owner: service.owner,
-      ownerId: service.ownerId,
-      title: service.title,
-      description: service.description,
-      category: service.category,
-      priceLabel: service.priceMin == null && service.priceMax == null
-        ? 'Precio por coordinar'
-        : `S/ ${service.priceMin ?? 0} – S/ ${service.priceMax ?? service.priceMin}`,
-      priceMin: service.priceMin,
-      priceMax: service.priceMax,
-      currency: 'PEN',
-      district: service.district,
-      createdAt: new Date(service.publishedAt).getTime(),
-      contactPhone: service.phone,
-      location: service.location || service.district,
-      lat: service.latitude ?? undefined,
-      lng: service.longitude ?? undefined,
-      image: service.images[0]?.url || '',
-      reviews: service.reviews.map((review) => ({
-        id: uiId(review.id),
-        user: review.username,
-        userId: review.userId,
-        stars: review.rating,
-        comment: review.comment || '',
-        date: review.createdAt,
-      })),
-    } satisfies Service));
-  }
-
+  const remote = await readRemoteList<RemoteService>("/api/servicios");
+  const services = new Map<string, Service>(
+    (remote ?? []).map((value) => [value.id, fromRemote(value)]),
+  );
+  if (!Capacitor.isNativePlatform())
+    return [...services.values()].map((service) => {
+      const image = browserImage("service", service.id);
+      return image ? { ...service, image, imagePending: true } : service;
+    });
   const db = await getDatabase();
-  const result = await db.query(`
-    SELECT s.*, u.NombreUsuario, u.Celular, c.NombreCategoria, d.NombreDistrito,
-           (SELECT RutaLocal FROM ImagenesServicio i WHERE i.IdServicio = s.IdServicio AND i.Eliminado = 0 ORDER BY i.Orden LIMIT 1) RutaLocal,
-           (SELECT UrlRemota FROM ImagenesServicio i WHERE i.IdServicio = s.IdServicio AND i.Eliminado = 0 ORDER BY i.Orden LIMIT 1) UrlRemota
-    FROM Servicios s
-    JOIN Usuarios u ON u.IdUsuario = s.IdUsuario
-    JOIN CategoriasServicio c ON c.IdCategoria = s.IdCategoria
-    JOIN Distritos d ON d.IdDistrito = u.IdDistrito
-    WHERE s.Eliminado = 0 AND s.Estado = 1;
-  `);
-  const services = [];
-  for (const row of result.values ?? []) {
-    const serviceRow = row as ServiceRow;
-    const reviews = await db.query(`
-      SELECT r.IdResena, r.Calificacion, r.Comentario, r.FechaResena, r.IdUsuario, u.NombreUsuario
-      FROM ResenasServicio r JOIN Usuarios u ON u.IdUsuario = r.IdUsuario
-      WHERE r.IdServicio = ? AND r.Eliminado = 0
-      ORDER BY r.FechaResena DESC;
-    `, [serviceRow.IdServicio]);
-    services.push({
-      id: uiId(serviceRow.IdServicio),
-      owner: serviceRow.NombreUsuario,
-      ownerId: serviceRow.IdUsuario,
-      title: serviceRow.Titulo,
-      description: serviceRow.Descripcion,
-      category: serviceRow.NombreCategoria,
-      priceLabel: serviceRow.PrecioMinimo == null && serviceRow.PrecioMaximo == null
-        ? 'Precio por coordinar'
-        : `S/ ${serviceRow.PrecioMinimo ?? 0} – S/ ${serviceRow.PrecioMaximo ?? serviceRow.PrecioMinimo}`,
-      priceMin: serviceRow.PrecioMinimo,
-      priceMax: serviceRow.PrecioMaximo,
-      currency: 'PEN',
-      district: serviceRow.NombreDistrito,
-      createdAt: new Date(serviceRow.FechaPublicacion).getTime(),
-      contactPhone: serviceRow.Celular,
-      location: serviceRow.UbicacionAproximada || serviceRow.NombreDistrito,
-      lat: serviceRow.Latitud ?? undefined,
-      lng: serviceRow.Longitud ?? undefined,
-      image: serviceRow.RutaLocal || serviceRow.UrlRemota || '',
-      reviews: (reviews.values ?? []).map((review) => ({
-        id: Number(review.IdResena) || Date.now(),
-        user: String(review.NombreUsuario),
-        userId: String(review.IdUsuario),
-        stars: Number(review.Calificacion),
-        comment: String(review.Comentario || ''),
-        date: String(review.FechaResena),
-      })),
-    } satisfies Service);
+  const session = await getSecureSession();
+  const rows = await db.query(
+    `SELECT s.*, u.NombreUsuario, u.Celular, c.NombreCategoria, d.NombreDistrito, d.IdDistrito,
+    (SELECT RutaLocal FROM ImagenesServicio i WHERE i.IdServicio = s.IdServicio AND i.Eliminado = 0 ORDER BY i.Orden LIMIT 1) RutaLocal,
+    (SELECT UrlRemota FROM ImagenesServicio i WHERE i.IdServicio = s.IdServicio AND i.Eliminado = 0 ORDER BY i.Orden LIMIT 1) UrlRemota
+    FROM Servicios s JOIN Usuarios u ON u.IdUsuario = s.IdUsuario
+    JOIN CategoriasServicio c ON c.IdCategoria = s.IdCategoria JOIN Distritos d ON d.IdDistrito = u.IdDistrito
+    WHERE u.Eliminado=0 AND (s.SyncEstado='sincronizado' OR u.IdUsuario=? OR u.RemoteId=?);`,
+    [session?.userId ?? "", session?.userId ?? ""],
+  );
+  for (const row of rows.values ?? []) {
+    const id = String(row.IdServicio);
+    if (row.Eliminado || !row.Estado) {
+      services.delete(id);
+      continue;
+    }
+    const existing = services.get(id);
+    // A newer API snapshot wins over synchronized fields, while local photos stay on the phone.
+    if (existing && row.SyncEstado === "sincronizado") {
+      if (row.RutaLocal) {
+        existing.image = String(row.RutaLocal);
+        existing.imagePending = !row.UrlRemota;
+      }
+      continue;
+    }
+    if (!existing && wasRemoteReadFresh("/api/servicios") && row.SyncEstado === "sincronizado") {
+      await db.run(
+        "UPDATE Servicios SET Eliminado=1,Estado=0 WHERE IdServicio=? AND SyncEstado='sincronizado';",
+        [id],
+      );
+      continue;
+    }
+    const reviews = await db.query(
+      `SELECT r.*, u.NombreUsuario FROM ResenasServicio r JOIN Usuarios u ON u.IdUsuario = r.IdUsuario WHERE r.IdServicio = ? AND r.Eliminado = 0;`,
+      [id],
+    );
+    services.set(id, {
+      id,
+      owner: String(row.NombreUsuario),
+      ownerId: String(row.IdUsuario),
+      isDemo: isKnownDemoOwner(String(row.IdUsuario)),
+      title: String(row.Titulo),
+      description: String(row.Descripcion),
+      categoryId: Number(row.IdCategoria),
+      category: String(row.NombreCategoria),
+      priceMin: row.PrecioMinimo ?? null,
+      priceMax: row.PrecioMaximo ?? null,
+      priceLabel: priceLabel(row.PrecioMinimo ?? null, row.PrecioMaximo ?? null),
+      currency: "PEN",
+      district: String(row.NombreDistrito),
+      districtId: Number(row.IdDistrito),
+      createdAt: new Date(String(row.FechaPublicacion)).getTime(),
+      contactPhone: String(row.Celular),
+      location: String(row.UbicacionAproximada || row.NombreDistrito),
+      lat: row.Latitud ?? undefined,
+      lng: row.Longitud ?? undefined,
+      image: String(row.RutaLocal || row.UrlRemota || ""),
+      imagePending: !!row.RutaLocal && !row.UrlRemota,
+      syncStatus: row.SyncEstado,
+      reviews:
+        existing?.reviews ??
+        (reviews.values ?? []).map((review) => ({
+          id: String(review.IdResena),
+          user: String(review.NombreUsuario),
+          userId: String(review.IdUsuario),
+          stars: Number(review.Calificacion),
+          comment: String(review.Comentario || ""),
+          date: String(review.FechaResena),
+        })),
+    });
   }
-  return services;
+  for (const operation of await contentQueue()) {
+    if (operation.entity === "Servicios" && operation.action === "eliminar")
+      services.delete(operation.id);
+    if (operation.entity === "ResenasServicio" && operation.action !== "eliminar") {
+      const service = services.get(String(operation.payload.serviceId));
+      if (service) {
+        const payload = operation.payload;
+        service.reviews = [
+          ...service.reviews.filter(
+            (review) => String(review.id) !== operation.id && review.userId !== payload.userId,
+          ),
+          {
+            id: operation.id,
+            user: String(payload.username || "Tú"),
+            userId: String(payload.userId || ""),
+            stars: Number(payload.rating),
+            comment: String(payload.comment || ""),
+            date: String(payload.createdAt || ""),
+          },
+        ];
+      }
+    }
+  }
+  return [...services.values()].sort((a, b) => b.createdAt - a.createdAt);
 }
 
-export async function createService(service: Service, image?: string): Promise<void> {
-  const db = await getDatabase();
-  if (!service.ownerId) throw new Error('No se puede publicar un servicio sin usuario autenticado.');
-  const idCategory = await categoryId(db, service.category);
-  const serviceId = String(service.id);
-  const imageId = `img-${serviceId}`;
-  await db.run(
-    `INSERT INTO Servicios
-      (IdServicio, IdUsuario, IdCategoria, Titulo, Descripcion, PrecioMinimo, PrecioMaximo,
-       UbicacionAproximada, Latitud, Longitud, RadioCoberturaMetros, SyncEstado)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente');`,
-    [
-      serviceId, service.ownerId, idCategory, service.title, service.description,
-      service.priceMin, service.priceMax, service.location, service.lat ?? null, service.lng ?? null, 1000,
-    ],
-  );
-  await enqueueSyncOperation('Servicios', serviceId, 'crear', {
-    id: serviceId,
-    categoryId: idCategory,
+async function servicePayload(service: Service) {
+  const categoryId =
+    service.categoryId ??
+    (Capacitor.isNativePlatform()
+      ? await localCatalogId("CategoriasServicio", service.category)
+      : await resolveCatalogId("category", service.category));
+  return {
+    id: String(service.id),
+    categoryId,
     title: service.title,
     description: service.description,
     priceMin: service.priceMin,
@@ -180,46 +218,140 @@ export async function createService(service: Service, image?: string): Promise<v
     latitude: service.lat ?? null,
     longitude: service.lng ?? null,
     coverageRadiusMeters: 1000,
-    images: [],
-  });
-  if (image) {
-    await db.run(
-      `INSERT INTO ImagenesServicio (IdImagen, IdServicio, RutaLocal, UrlRemota, Orden)
-       VALUES (?, ?, ?, ?, 0);`,
-      [imageId, serviceId, image.startsWith('http') ? null : image, image.startsWith('http') ? image : null],
-    );
-    await enqueueSyncOperation('ImagenesServicio', imageId, 'crear', {
-      id: imageId,
-      serviceId,
-      url: image,
-      order: 0,
-    });
-  }
+    images: isRemoteImage(service.image)
+      ? [{ id: `img-${service.id}`, url: service.image, order: 0 }]
+      : [],
+  };
 }
 
-export async function addReview(serviceId: number | string, review: Review): Promise<void> {
+async function saveService(service: Service, action: "crear" | "actualizar"): Promise<void> {
+  const ownerId = await requireOwner(service.ownerId);
+  const knownRemote = (await cachedList<RemoteService>("/api/servicios"))?.find(
+    (row) => row.id === String(service.id),
+  );
+  if (knownRemote) await requireOwner(knownRemote.ownerId);
+  const payload = await servicePayload(service);
+  if (!Capacitor.isNativePlatform()) {
+    saveBrowserImage("service", service.id, service.image);
+    const saved = await apiRequest<RemoteService>(
+      `/api/servicios${action === "actualizar" ? `/${encodeURIComponent(payload.id)}` : ""}`,
+      { method: action === "crear" ? "POST" : "PUT", body: JSON.stringify(payload) },
+    );
+    await upsertRemoteCache("/api/servicios", saved);
+    return;
+  }
   const db = await getDatabase();
-  if (!review.userId) throw new Error('No se puede guardar una reseña sin usuario autenticado.');
-  const serviceKey = String(serviceId);
-  await db.run(
-    `INSERT INTO ResenasServicio (IdResena, IdServicio, IdUsuario, Calificacion, Comentario, SyncEstado)
-     VALUES (?, ?, ?, ?, ?, 'pendiente')
-     ON CONFLICT(IdServicio, IdUsuario) DO UPDATE SET
-       Calificacion = excluded.Calificacion,
-       Comentario = excluded.Comentario,
-       FechaActualizacion = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-       SyncEstado = 'pendiente';`,
-    [`review-${review.id}`, serviceKey, review.userId, review.stars, review.comment],
+  const existing = await db.query("SELECT IdUsuario FROM Servicios WHERE IdServicio=?;", [
+    payload.id,
+  ]);
+  if (existing.values?.[0]) await requireOwner(String(existing.values[0].IdUsuario));
+  const statements = [
+    {
+      statement: `INSERT INTO Servicios
+    (IdServicio, IdUsuario, IdCategoria, Titulo, Descripcion, PrecioMinimo, PrecioMaximo, UbicacionAproximada, Latitud, Longitud, RadioCoberturaMetros, FechaPublicacion, SyncEstado)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1000, ?, 'pendiente')
+    ON CONFLICT(IdServicio) DO UPDATE SET IdCategoria=excluded.IdCategoria, Titulo=excluded.Titulo,
+    Descripcion=excluded.Descripcion, PrecioMinimo=excluded.PrecioMinimo, PrecioMaximo=excluded.PrecioMaximo,
+    UbicacionAproximada=excluded.UbicacionAproximada, Latitud=excluded.Latitud, Longitud=excluded.Longitud,
+    SyncEstado='pendiente', FechaActualizacion=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+    WHERE Servicios.IdUsuario=excluded.IdUsuario AND Servicios.Eliminado=0;`,
+      values: [
+        payload.id,
+        ownerId,
+        payload.categoryId,
+        payload.title,
+        payload.description,
+        payload.priceMin,
+        payload.priceMax,
+        payload.location,
+        payload.latitude,
+        payload.longitude,
+        new Date(service.createdAt).toISOString(),
+      ],
+    },
+  ];
+  if (service.image)
+    statements.push({
+      statement: `INSERT INTO ImagenesServicio (IdImagen,IdServicio,RutaLocal,UrlRemota,Orden,SyncEstado)
+    VALUES (?,?,?,?,0,?) ON CONFLICT(IdImagen) DO UPDATE SET RutaLocal=excluded.RutaLocal,UrlRemota=excluded.UrlRemota,SyncEstado=excluded.SyncEstado;`,
+      values: [
+        `img-${service.id}`,
+        payload.id,
+        isRemoteImage(service.image) ? null : service.image,
+        isRemoteImage(service.image) ? service.image : null,
+        isRemoteImage(service.image) ? "sincronizado" : "pendiente",
+      ],
+    });
+  await commitPending(statements, "Servicios", payload.id, action, payload);
+}
+
+export async function createService(service: Service, image?: string): Promise<void> {
+  return saveService({ ...service, image: image ?? service.image }, "crear");
+}
+export async function updateService(service: Service): Promise<void> {
+  return saveService(service, "actualizar");
+}
+
+export async function deleteService(id: EntityId, ownerId: string): Promise<void> {
+  const localId = await requireOwner(ownerId);
+  const key = String(id);
+  if (!Capacitor.isNativePlatform()) {
+    await apiRequest(`/api/servicios/${encodeURIComponent(key)}`, { method: "DELETE" });
+    await amendRemoteCache<RemoteService>("/api/servicios", key, () => null);
+    removeBrowserImage("service", id);
+    return;
+  }
+  const current = (await listServices()).find((value) => String(value.id) === key);
+  if (!current || !current.ownerId) throw new Error("Solo puedes eliminar tus propios servicios.");
+  await requireOwner(current.ownerId);
+  const payload = await servicePayload(current);
+  await commitPending(
+    [
+      {
+        statement: `INSERT INTO Servicios
+    (IdServicio,IdUsuario,IdCategoria,Titulo,Descripcion,PrecioMinimo,PrecioMaximo,Eliminado,Estado,SyncEstado)
+    VALUES (?,?,?,?,?,?,?,1,0,'pendiente') ON CONFLICT(IdServicio) DO UPDATE SET
+    Eliminado=1,Estado=0,SyncEstado='pendiente',FechaActualizacion=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+    WHERE Servicios.IdUsuario=excluded.IdUsuario;`,
+        values: [
+          key,
+          localId,
+          payload.categoryId,
+          payload.title,
+          payload.description,
+          payload.priceMin,
+          payload.priceMax,
+        ],
+      },
+    ],
+    "Servicios",
+    key,
+    "eliminar",
+    { id: key },
   );
-  const persisted = await db.query(
-    'SELECT IdResena FROM ResenasServicio WHERE IdServicio = ? AND IdUsuario = ? LIMIT 1;',
-    [serviceKey, review.userId],
-  );
-  const reviewId = String(persisted.values?.[0]?.IdResena || `review-${review.id}`);
-  await enqueueSyncOperation('ResenasServicio', reviewId, 'actualizar', {
-    id: reviewId,
-    serviceId: serviceKey,
+  await amendRemoteCache<RemoteService>("/api/servicios", key, () => null);
+}
+
+export async function addReview(serviceId: EntityId, review: Review): Promise<void> {
+  await requireOwner(review.userId);
+  const key = String(serviceId);
+  const id = String(review.id);
+  const payload = {
+    id,
+    serviceId: key,
     rating: review.stars,
     comment: review.comment,
-  });
+    userId: review.userId,
+    username: review.user,
+    createdAt: review.date,
+  };
+  if (!Capacitor.isNativePlatform()) {
+    await apiRequest(`/api/servicios/${encodeURIComponent(key)}/resenas`, {
+      method: "PUT",
+      body: JSON.stringify({ id, rating: review.stars, comment: review.comment }),
+    });
+    return;
+  }
+  // The public cached service need not be inserted with a made-up private owner profile.
+  await commitPending([], "ResenasServicio", id, "actualizar", payload);
 }

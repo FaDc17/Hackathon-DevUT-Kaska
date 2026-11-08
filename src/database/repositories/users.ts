@@ -1,8 +1,9 @@
 import { getDatabase } from "../connection";
+import { Capacitor } from "@capacitor/core";
 import type { SQLiteDBConnection } from "@capacitor-community/sqlite";
 import type { User } from "../../types";
 import type { PublicUser, ProfileUpdateRequest } from "../../services/auth";
-import { enqueueSyncOperation } from "./syncQueue";
+import { commitPending, requireOwner } from "./contentShared";
 
 type UserRow = {
   IdUsuario: string;
@@ -23,7 +24,11 @@ export type PendingProfileOperation = {
 };
 
 export function normalizeDistrictName(value: string): string {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 function toUser(row: UserRow): User {
@@ -49,9 +54,12 @@ export async function districtIdByName(district: string): Promise<number> {
 async function findDistrictId(db: SQLiteDBConnection, district: string): Promise<number> {
   const districts = await db.query("SELECT IdDistrito, NombreDistrito FROM Distritos;");
   const wanted = normalizeDistrictName(district);
-  const districtId = (districts.values ?? []).find(
+  const matches = (districts.values ?? []).filter(
     (row) => normalizeDistrictName(String(row.NombreDistrito)) === wanted,
-  )?.IdDistrito;
+  );
+  if (matches.length > 1)
+    throw new Error("Selecciona departamento, provincia y distrito para identificar tu ubicación.");
+  const districtId = matches[0]?.IdDistrito;
   if (districtId === undefined) {
     throw new Error(`El distrito "${district}" no existe en los datos geográficos locales.`);
   }
@@ -67,6 +75,14 @@ const USER_SELECT = `
 `;
 
 export async function listUsers(): Promise<User[]> {
+  if (!Capacitor.isNativePlatform()) {
+    try {
+      const stored = localStorage.getItem("kuska-cached-user");
+      return stored ? [JSON.parse(stored) as User] : [];
+    } catch {
+      return [];
+    }
+  }
   const db = await getDatabase();
   const result = await db.query(`
     ${USER_SELECT}
@@ -77,6 +93,8 @@ export async function listUsers(): Promise<User[]> {
 }
 
 export async function getUserById(id: string): Promise<User | null> {
+  if (!Capacitor.isNativePlatform())
+    return (await listUsers()).find((user) => user.id === id) ?? null;
   const db = await getDatabase();
   const result = await db.query(
     `${USER_SELECT} WHERE (u.IdUsuario = ? OR u.RemoteId = ?) AND u.Eliminado = 0 LIMIT 1;`,
@@ -86,13 +104,65 @@ export async function getUserById(id: string): Promise<User | null> {
 }
 
 export async function cacheRemoteUser(user: PublicUser): Promise<User> {
+  if (!Capacitor.isNativePlatform()) {
+    const cached: User = {
+      id: user.id,
+      remoteId: user.id,
+      name: user.username,
+      phone: user.phone,
+      address: user.address,
+      district: user.district,
+      districtId: user.districtId,
+      avatar: user.username.charAt(0).toUpperCase(),
+      about: user.about || "",
+      syncStatus: "sincronizado",
+    };
+    localStorage.setItem("kuska-cached-user", JSON.stringify(cached));
+    return cached;
+  }
   const db = await getDatabase();
-  const districtId = user.districtId || await findDistrictId(db, user.district);
+  const districtId = user.districtId || (await findDistrictId(db, user.district));
+  // Cache the authenticated location exactly as supplied by the server, including
+  // districts absent from the bundled subset. Never resolve homonyms by their name.
+  const currentDistrict = await db.query(
+    "SELECT IdDepartamento,NombreProvincia,NombreDistrito FROM Distritos WHERE IdDistrito=?;",
+    [districtId],
+  );
+  const current = currentDistrict.values?.[0];
+  if (
+    current &&
+    (Number(current.IdDepartamento) !== user.departmentId ||
+      normalizeDistrictName(String(current.NombreProvincia)) !==
+        normalizeDistrictName(user.province) ||
+      normalizeDistrictName(String(current.NombreDistrito)) !==
+        normalizeDistrictName(user.district))
+  ) {
+    throw new Error(
+      "La ubicación guardada en el teléfono no coincide con el servidor. Se necesita revisar el catálogo antes de continuar.",
+    );
+  }
+  if (!current) {
+    await db.executeSet(
+      [
+        {
+          statement:
+            "INSERT INTO Departamentos (IdDepartamento,NombreDepartamento) VALUES (?,?) ON CONFLICT(IdDepartamento) DO NOTHING;",
+          values: [user.departmentId, user.department],
+        },
+        {
+          statement:
+            "INSERT INTO Distritos (IdDistrito,IdDepartamento,NombreProvincia,NombreDistrito) VALUES (?,?,?,?) ON CONFLICT(IdDistrito) DO NOTHING;",
+          values: [districtId, user.departmentId, user.province, user.district],
+        },
+      ],
+      true,
+    );
+  }
   const matchingRows = await db.query(
-    `SELECT IdUsuario, RemoteId
+    `SELECT IdUsuario, RemoteId, SyncEstado, Eliminado
      FROM Usuarios
-     WHERE lower(NombreUsuario) = lower(?) OR Celular = ?;`,
-    [user.username, user.phone],
+     WHERE IdUsuario = ? OR RemoteId = ?;`,
+    [user.id, user.id],
   );
   const rows = matchingRows.values ?? [];
   const distinctIds = [...new Set(rows.map((row) => String(row.IdUsuario)))];
@@ -101,10 +171,12 @@ export async function cacheRemoteUser(user: PublicUser): Promise<User> {
   }
 
   const localId = distinctIds[0] || user.id;
-  const existing = await db.query(
-    "SELECT 1 FROM Usuarios WHERE IdUsuario = ? LIMIT 1;",
-    [localId],
-  );
+  if (rows[0]?.Eliminado) throw new Error("Esta cuenta ya no está disponible en el teléfono.");
+  if (rows[0] && rows[0].SyncEstado !== "sincronizado") {
+    const pending = await getUserById(localId);
+    if (pending) return pending;
+  }
+  const existing = await db.query("SELECT 1 FROM Usuarios WHERE IdUsuario = ? LIMIT 1;", [localId]);
   if (existing.values?.length) {
     await db.run(
       `UPDATE Usuarios
@@ -129,19 +201,28 @@ export async function cacheRemoteUser(user: PublicUser): Promise<User> {
 }
 
 export async function updateUser(user: User, pendingSync = true): Promise<void> {
+  await requireOwner(user.id);
+  if (!Capacitor.isNativePlatform()) {
+    localStorage.setItem("kuska-cached-user", JSON.stringify(user));
+    return;
+  }
   const db = await getDatabase();
-  const districtId = user.districtId || await findDistrictId(db, user.district);
-  await db.run(
-    `UPDATE Usuarios
+  const districtId = user.districtId || (await findDistrictId(db, user.district));
+  const statement = `UPDATE Usuarios
      SET NombreUsuario = ?, Celular = ?, DireccionPrivada = ?, IdDistrito = ?,
          DescripcionPerfil = ?, FechaActualizacion = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
          SyncEstado = ?
-     WHERE IdUsuario = ? OR RemoteId = ?;`,
-    [
-      user.name.trim(), user.phone, user.address.trim(), districtId, user.about || null,
-      pendingSync ? "pendiente" : "sincronizado", user.id, user.id,
-    ],
-  );
+     WHERE (IdUsuario = ? OR RemoteId = ?) AND Eliminado=0;`;
+  const values = [
+    user.name.trim(),
+    user.phone,
+    user.address.trim(),
+    districtId,
+    user.about || null,
+    pendingSync ? "pendiente" : "sincronizado",
+    user.id,
+    user.id,
+  ];
   if (pendingSync) {
     const result = await db.query(
       "SELECT RemoteId FROM Usuarios WHERE IdUsuario = ? OR RemoteId = ? LIMIT 1;",
@@ -155,8 +236,8 @@ export async function updateUser(user: User, pendingSync = true): Promise<void> 
       districtId,
       about: user.about || "",
     };
-    await enqueueSyncOperation("Usuarios", remoteId, "actualizar", payload);
-  }
+    await commitPending([{ statement, values }], "Usuarios", remoteId, "actualizar", payload);
+  } else await db.run(statement, values);
 }
 
 export async function pendingProfileOperations(userId: string): Promise<PendingProfileOperation[]> {
@@ -198,6 +279,11 @@ export async function removeProfileOperation(id: number): Promise<void> {
 }
 
 export async function saveSession(userId: string | null): Promise<void> {
+  if (!Capacitor.isNativePlatform()) {
+    if (userId) localStorage.setItem("kuska-session", userId);
+    else localStorage.removeItem("kuska-session");
+    return;
+  }
   const db = await getDatabase();
   await db.run(`
     CREATE TABLE IF NOT EXISTS SesionesLocales (
@@ -208,14 +294,15 @@ export async function saveSession(userId: string | null): Promise<void> {
   `);
   await db.run("DELETE FROM SesionesLocales WHERE Clave = ?;", ["usuario_activo"]);
   if (userId) {
-    await db.run(
-      "INSERT INTO SesionesLocales (Clave, Valor) VALUES (?, ?);",
-      ["usuario_activo", userId],
-    );
+    await db.run("INSERT INTO SesionesLocales (Clave, Valor) VALUES (?, ?);", [
+      "usuario_activo",
+      userId,
+    ]);
   }
 }
 
 export async function getSavedSession(): Promise<string | null> {
+  if (!Capacitor.isNativePlatform()) return localStorage.getItem("kuska-session");
   const db = await getDatabase();
   await db.run(`
     CREATE TABLE IF NOT EXISTS SesionesLocales (

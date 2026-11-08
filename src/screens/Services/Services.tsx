@@ -3,6 +3,7 @@ import { Icon, Header, ServiceCard } from "../../components/common/CommonCompone
 import { EmptyState } from "../Home/EmptyState";
 import type { Service } from "../../types";
 import { categories } from "../../data/demo";
+import { getServiceCategories, type ServiceCategory } from "../../services/catalogs";
 
 export function Services({
   services,
@@ -16,22 +17,39 @@ export function Services({
   services: Service[];
   category: string;
   setCategory: (s: string) => void;
-  openService: (id: number) => void;
+  openService: (id: string | number) => void;
   openModal: () => void;
   showAll: () => void;
   back: () => void;
 }) {
   const [more, setMore] = useState(false);
-  const filtered =
+  const [query, setQuery] = useState("");
+  const [catalog, setCatalog] = useState<ServiceCategory[]>([]);
+  useEffect(() => {
+    void getServiceCategories()
+      .then(setCatalog)
+      .catch(() => {});
+  }, []);
+  const filtered = (
     category === "Todos" || category === "Más"
       ? services
-      : services.filter((s) => s.category === category);
+      : services.filter((s) => s.category === category)
+  ).filter((service) =>
+    `${service.title} ${service.description} ${service.district}`
+      .toLocaleLowerCase("es")
+      .includes(query.toLocaleLowerCase("es")),
+  );
   return (
     <section className="page">
       <Header title="Servicios" kicker="ECONOMÍA LOCAL" onBack={back} />
       <div className="search-box">
         <Icon name="search" />
-        <input aria-label="Buscar servicios" placeholder="¿Qué servicio buscas?" />
+        <input
+          aria-label="Buscar servicios"
+          placeholder="¿Qué servicio buscas?"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
       </div>
       <div className="section-heading compact">
         <div>
@@ -40,27 +58,37 @@ export function Services({
         </div>
       </div>
       <div className="categories">
-        {categories.map(([label, icon]) => (
+        {catalog.slice(0, 7).map(({ nombre: label }) => (
           <button
             key={label}
             className={category === label ? "active" : ""}
-            onClick={() =>
-              label === "Más" ? setMore(!more) : setCategory(category === label ? "Todos" : label)
-            }
+            onClick={() => setCategory(category === label ? "Todos" : label)}
           >
             <span>
-              <Icon name={icon} />
+              <Icon name={categories.find(([name]) => name === label)?.[1] || "grid"} />
             </span>
             <small>{label}</small>
           </button>
         ))}
+        {catalog.length > 7 && (
+          <button onClick={() => setMore(!more)}>
+            <span>
+              <Icon name="grid" />
+            </span>
+            <small>Más</small>
+          </button>
+        )}
       </div>
       {more && (
         <div className="more-categories">
-          <button>Jardinería</button>
-          <button>Belleza</button>
-          <button>Tecnología</button>
-          <button>Eventos</button>
+          {catalog.slice(7).map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setCategory(category === item.nombre ? "Todos" : item.nombre)}
+            >
+              {item.nombre}
+            </button>
+          ))}
         </div>
       )}
       <button className="publish-cta" onClick={openModal}>

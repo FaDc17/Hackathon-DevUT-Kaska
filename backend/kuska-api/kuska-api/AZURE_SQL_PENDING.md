@@ -20,7 +20,7 @@ No almacenar usuarios ni contrasenas reales en archivos del proyecto.
 
 ```powershell
 $env:AZURE_SQL_USERNAME = "administrador"
-$env:AZURE_SQL_PASSWORD = Read-Host "Azure SQL password"
+$env:AZURE_SQL_PASSWORD = Read-Host "Azure SQL password" -MaskInput
 ```
 
 No imprimas la variable de contraseña. Para comprobar que ambas estan
@@ -60,21 +60,21 @@ El resultado esperado incluye `free-sql-db-8911281`, `administrador` y
 
 ## Variables obligatorias
 
-Antes de iniciar, define las credenciales de Azure y una contraseña distinta
-para la cuenta HTTP de Spring en la misma terminal:
+Antes de iniciar, define las credenciales de Azure y el secreto JWT en la misma
+terminal. La autenticación HTTP utiliza JWT; las antiguas variables de Basic
+Auth `KUSKA_SECURITY_USERNAME` y `KUSKA_SECURITY_PASSWORD` ya no se utilizan.
 
 ```powershell
 $env:AZURE_SQL_USERNAME = "administrador"
-$env:AZURE_SQL_PASSWORD = Read-Host "Contraseña Azure SQL"
-$env:KUSKA_SECURITY_USERNAME = "kuska-admin"
-$env:KUSKA_SECURITY_PASSWORD = Read-Host "Contraseña HTTP Kuska API"
+$env:AZURE_SQL_PASSWORD = Read-Host "Contraseña Azure SQL" -MaskInput
+$env:JWT_SECRET = Read-Host "Secreto JWT Base64 de al menos 32 bytes aleatorios" -MaskInput
 ```
 
 Verifica únicamente su disponibilidad:
 
 ```powershell
 @("AZURE_SQL_USERNAME", "AZURE_SQL_PASSWORD",
-  "KUSKA_SECURITY_USERNAME", "KUSKA_SECURITY_PASSWORD") |
+  "JWT_SECRET") |
   ForEach-Object {
     if ([Environment]::GetEnvironmentVariable($_, "Process")) {
       "$_ disponible"
@@ -84,5 +84,12 @@ Verifica únicamente su disponibilidad:
   }
 ```
 
-No se iniciara una instancia que no haya obtenido las cuatro variables ni que
+No se iniciara una instancia que no haya obtenido las tres variables ni que
 no haya comprobado mediante JDBC la base y el servidor configurados.
+
+`Read-Host -MaskInput` requiere PowerShell 7. En Windows PowerShell 5.1, configura
+los secretos con el gestor de variables del entorno o App Service. No los
+escribas como argumentos de comandos ni los guardes en el repositorio.
+
+Para el diagnóstico del App Service existente, contratos HTTP nuevos y las
+limitaciones verificadas, consulta [BACKEND_VERIFICATION.md](BACKEND_VERIFICATION.md).

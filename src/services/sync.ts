@@ -1,4 +1,6 @@
 import { getSecureSession } from "./secureSession";
+import { Capacitor } from "@capacitor/core";
+import { isRemoteImage } from "./images";
 import { apiRequest, ApiError } from "./apiClient";
 import {
   markSyncOperationFailed,
@@ -19,7 +21,7 @@ let retryTimer: number | null = null;
 
 function scheduleRetry(attempts: number): void {
   if (retryTimer !== null || !navigator.onLine) return;
-  const delay = Math.min(60_000, 1_000 * (2 ** Math.min(attempts, 6)));
+  const delay = Math.min(60_000, 1_000 * 2 ** Math.min(attempts, 6));
   retryTimer = window.setTimeout(() => {
     retryTimer = null;
     void syncPendingProfileUpdates();
@@ -27,6 +29,7 @@ function scheduleRetry(attempts: number): void {
 }
 
 export function syncPendingProfileUpdates(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return Promise.resolve();
   if (syncInProgress) {
     syncRequested = true;
     return syncInProgress;
@@ -54,7 +57,17 @@ async function synchronize(): Promise<void> {
   for (const operation of operations) {
     try {
       if (!operation.Payload) throw new Error("empty-payload");
-      payloads.set(operation.IdOperacion, JSON.parse(operation.Payload) as unknown);
+      const payload = JSON.parse(operation.Payload) as unknown;
+      if (
+        ["ImagenesServicio", "ImagenesPublicacion"].includes(operation.Entidad) &&
+        (!payload ||
+          typeof payload !== "object" ||
+          !isRemoteImage(String((payload as { url?: unknown }).url || "")))
+      ) {
+        await markSyncOperationFailed(operation.IdOperacion, "IMAGE_UPLOAD_UNAVAILABLE");
+        continue;
+      }
+      payloads.set(operation.IdOperacion, payload);
       ready.push(operation);
     } catch {
       await markSyncOperationFailed(operation.IdOperacion, "INVALID_LOCAL_OPERATION");
@@ -63,7 +76,7 @@ async function synchronize(): Promise<void> {
   if (ready.length === 0) return;
 
   const request = ready.map((operation) => ({
-    operationId: `kuska:${operation.IdOperacion}`,
+    operationId: `kuska:${operation.ClientOperationId}`,
     entity: operation.Entidad,
     operation: operation.Operacion,
     entityId: operation.EntidadId,
@@ -78,22 +91,24 @@ async function synchronize(): Promise<void> {
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) return;
-    const code = error instanceof ApiError
-      ? `${error.code}:${error.status}`
-      : "SYNC_FAILED";
+    const code = error instanceof ApiError ? `${error.code}:${error.status}` : "SYNC_FAILED";
     for (const operation of ready) {
       await markSyncOperationFailed(operation.IdOperacion, code);
     }
-    if (!(error instanceof ApiError) || error.status === 0) {
+    if (!(error instanceof ApiError) || error.status === 0 || error.status >= 500) {
       scheduleRetry(Math.max(...ready.map((operation) => operation.Intentos), 0) + 1);
     }
     return;
   }
 
+  const activeSession = await getSecureSession();
+  if (activeSession?.userId !== session.userId) return;
+
   const resultById = new Map(results.map((result) => [result.operationId, result]));
   let retryNeeded = false;
+  let progressed = false;
   for (const operation of ready) {
-    const operationId = `kuska:${operation.IdOperacion}`;
+    const operationId = `kuska:${operation.ClientOperationId}`;
     const result = resultById.get(operationId);
     if (!result) {
       await markSyncOperationFailed(operation.IdOperacion, "MISSING_SYNC_RESULT");
@@ -106,15 +121,17 @@ async function synchronize(): Promise<void> {
         operation.Entidad,
         operation.EntidadId,
       );
+      progressed = true;
     } else {
-      await markSyncOperationFailed(
-        operation.IdOperacion,
-        result.error || "SYNC_REJECTED",
-      );
+      await markSyncOperationFailed(operation.IdOperacion, result.error || "SYNC_REJECTED");
       retryNeeded ||= result.error === "SYNC_FAILED";
     }
   }
   if (retryNeeded) {
     scheduleRetry(Math.max(...ready.map((operation) => operation.Intentos), 0) + 1);
+  }
+  if (progressed) {
+    window.dispatchEvent(new Event("kuska:sync-complete"));
+    if ((await pendingSyncOperations(1)).length > 0 && !retryNeeded) syncRequested = true;
   }
 }

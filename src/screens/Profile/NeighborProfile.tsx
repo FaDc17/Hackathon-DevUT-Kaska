@@ -1,4 +1,10 @@
-import { Icon, Header, ServiceCard, PostCard, formatPhone } from "../../components/common/CommonComponents";
+import {
+  Icon,
+  Header,
+  ServiceCard,
+  PostCard,
+  formatPhone,
+} from "../../components/common/CommonComponents";
 import { EmptyState } from "../Home/EmptyState";
 import type { Post, Service, User } from "../../types";
 
@@ -13,13 +19,13 @@ export function NeighborProfile({
   neighbor: User;
   services: Service[];
   posts: Post[];
-  openService: (id: number) => void;
-  openPost: (id: number) => void;
+  openService: (id: string | number) => void;
+  openPost: (id: string | number) => void;
   back: () => void;
 }) {
   const neighborServices = services.filter((service) => service.ownerId === neighbor.id);
   const neighborPosts = posts.filter((post) => post.ownerId === neighbor.id);
-  const publicPhone = neighbor.phone || "987654321";
+  const publicPhone = neighbor.phone;
   return (
     <section className="page neighbor-page">
       <Header title="Perfil del vecino" kicker="COMUNIDAD KUSKA" onBack={back} />
@@ -45,7 +51,11 @@ export function NeighborProfile({
         </span>
         <div>
           <strong>Contacto</strong>
-          <p>{formatPhone(publicPhone)}</p>
+          <p>
+            {publicPhone
+              ? formatPhone(publicPhone)
+              : "Consulta el contacto publicado en sus servicios."}
+          </p>
         </div>
       </div>
       <p className="public-privacy">

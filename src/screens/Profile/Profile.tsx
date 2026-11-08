@@ -12,19 +12,25 @@ export function Profile({
   openAbout,
   edit,
   logout,
+  deleteAccount,
 }: {
   user: User;
   services: Service[];
   posts: Post[];
-  openService: (id: number) => void;
-  openPost: (id: number) => void;
+  openService: (id: string | number) => void;
+  openPost: (id: string | number) => void;
   back: () => void;
   openAbout: () => void;
   edit: () => void;
   logout: () => void;
+  deleteAccount: () => void;
 }) {
-  const myServices = services.filter((service) => service.ownerId === user.id);
-  const myPosts = posts.filter((post) => post.ownerId === user.id);
+  const myServices = services.filter(
+    (service) => !!service.ownerId && [user.id, user.remoteId].includes(service.ownerId),
+  );
+  const myPosts = posts.filter(
+    (post) => !!post.ownerId && [user.id, user.remoteId].includes(post.ownerId),
+  );
   return (
     <section className="page profile-page">
       <div className="profile-hero">
@@ -113,6 +119,9 @@ export function Profile({
       >
         <Icon name="logout" />
         Cerrar sesión
+      </button>
+      <button className="logout-button" onClick={deleteAccount}>
+        Eliminar mi cuenta
       </button>
     </section>
   );

@@ -13,7 +13,13 @@ export const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 export const TILE_ATTRIBUTION = "© OpenStreetMap";
 
 export type MarkerKind = "service" | "community" | "emergency";
-export type MapMarker = { id: number; lat: number; lng: number; kind: MarkerKind; label: string };
+export type MapMarker = {
+  id: string | number;
+  lat: number;
+  lng: number;
+  kind: MarkerKind;
+  label: string;
+};
 
 const iconCache = new Map<string, L.DivIcon>();
 function markerIcon(kind: MarkerKind, selected: boolean) {
@@ -70,8 +76,8 @@ export function KuskaMap({
 }: {
   markers: MapMarker[];
   center: LatLng;
-  selectedId?: number | null;
-  onSelect: (id: number) => void;
+  selectedId?: string | number | null;
+  onSelect: (id: string | number) => void;
   userPos?: LatLng | null;
   flyTarget?: LatLng | null;
 }) {
@@ -178,7 +184,12 @@ export function LocationPicker({
   return (
     <div className="location-picker">
       <div className="picker-map">
-        <MapContainer center={[start.lat, start.lng]} zoom={15} zoomControl={false} className="real-map">
+        <MapContainer
+          center={[start.lat, start.lng]}
+          zoom={15}
+          zoomControl={false}
+          className="real-map"
+        >
           <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} maxZoom={19} />
           <FixSize />
           <FlyTo target={value} />

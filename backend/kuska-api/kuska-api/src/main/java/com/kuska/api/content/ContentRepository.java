@@ -59,6 +59,12 @@ public class ContentRepository {
 				.orElseThrow(() -> new ResourceNotFoundException("Servicio no encontrado."));
 	}
 
+	public String serviceOwnerIncludingDeleted(String id) {
+		return jdbc.query("SELECT IdUsuario FROM dbo.Servicios WHERE IdServicio = ?",
+				(rs, row) -> rs.getString(1), id).stream().findFirst()
+				.orElseThrow(() -> new ResourceNotFoundException("Servicio no encontrado."));
+	}
+
 	public void insertService(String ownerId, ServiceRequest request) {
 		jdbc.update("""
 				INSERT INTO dbo.Servicios
@@ -241,6 +247,12 @@ public class ContentRepository {
 
 	public String postOwner(String id) {
 		return jdbc.query("SELECT IdUsuario FROM dbo.Publicaciones WHERE IdPublicacion = ? AND Eliminado = 0",
+				(rs, row) -> rs.getString(1), id).stream().findFirst()
+				.orElseThrow(() -> new ResourceNotFoundException("Publicación no encontrada."));
+	}
+
+	public String postOwnerIncludingDeleted(String id) {
+		return jdbc.query("SELECT IdUsuario FROM dbo.Publicaciones WHERE IdPublicacion = ?",
 				(rs, row) -> rs.getString(1), id).stream().findFirst()
 				.orElseThrow(() -> new ResourceNotFoundException("Publicación no encontrada."));
 	}
@@ -571,7 +583,7 @@ public class ContentRepository {
 				service.district(), service.categoryId(), service.category(), service.title(), service.description(),
 				service.priceMin(), service.priceMax(), service.location(), service.latitude(),
 				service.longitude(), service.coverageRadiusMeters(), service.publishedAt(),
-				serviceImages(service.id()), reviews(service.id()));
+				serviceImages(service.id()), reviews(service.id()), service.districtId());
 	}
 
 	private PostView postView(ResultSet rs) throws SQLException {
@@ -581,7 +593,8 @@ public class ContentRepository {
 				rs.getString("Titulo"), rs.getString("Descripcion"), rs.getString("UbicacionAproximada"),
 				nullableDouble(rs, "Latitud"), nullableDouble(rs, "Longitud"),
 				nullableDouble(rs, "RadioAproximadoMetros"),
-				rs.getTimestamp("FechaPublicacion").toLocalDateTime(), List.of(), List.of(), null);
+				rs.getTimestamp("FechaPublicacion").toLocalDateTime(), List.of(), List.of(), null,
+				rs.getInt("IdDistrito"));
 	}
 
 	private PostView attachPostDetails(PostView post) {
@@ -589,18 +602,18 @@ public class ContentRepository {
 				post.typeId(), post.type(),
 				post.title(), post.description(), post.location(), post.latitude(), post.longitude(),
 				post.approximateRadiusMeters(), post.publishedAt(), postImages(post.id()),
-				replies(post.id()), emergencyForPost(post.id()).orElse(null));
+				replies(post.id()), emergencyForPost(post.id()).orElse(null), post.districtId());
 	}
 
 	private String serviceSql() {
 		return """
-				SELECT s.IdServicio, s.IdUsuario, u.NombreUsuario, u.Celular, d.NombreDistrito,
+				SELECT s.IdServicio, s.IdUsuario, u.NombreUsuario, u.Celular, u.IdDistrito, d.NombreDistrito,
 					   s.IdCategoria,
 					   c.NombreCategoria, s.Titulo, s.Descripcion, s.PrecioMinimo, s.PrecioMaximo,
 					   s.UbicacionAproximada, s.Latitud, s.Longitud, s.RadioCoberturaMetros,
 					   s.FechaPublicacion
 				FROM dbo.Servicios s
-				JOIN dbo.Usuarios u ON u.IdUsuario = s.IdUsuario
+				JOIN dbo.Usuarios u ON u.IdUsuario = s.IdUsuario AND u.Estado = 1 AND u.Eliminado = 0
 				JOIN dbo.Distritos d ON d.IdDistrito = u.IdDistrito
 				JOIN dbo.CategoriasServicio c ON c.IdCategoria = s.IdCategoria
 				""";
@@ -608,12 +621,12 @@ public class ContentRepository {
 
 	private String postSql() {
 		return """
-				SELECT p.IdPublicacion, p.IdUsuario, u.NombreUsuario, d.NombreDistrito,
+				SELECT p.IdPublicacion, p.IdUsuario, u.NombreUsuario, u.IdDistrito, d.NombreDistrito,
 					   p.IdTipoPublicacion,
 					   t.NombreTipo, p.Titulo, p.Descripcion, p.UbicacionAproximada,
 					   p.Latitud, p.Longitud, p.RadioAproximadoMetros, p.FechaPublicacion
 				FROM dbo.Publicaciones p
-				JOIN dbo.Usuarios u ON u.IdUsuario = p.IdUsuario
+				JOIN dbo.Usuarios u ON u.IdUsuario = p.IdUsuario AND u.Estado = 1 AND u.Eliminado = 0
 				JOIN dbo.Distritos d ON d.IdDistrito = u.IdDistrito
 				JOIN dbo.TiposPublicacion t ON t.IdTipoPublicacion = p.IdTipoPublicacion
 				""";
@@ -632,7 +645,7 @@ public class ContentRepository {
 			String id, String ownerId, String owner, String district, String phone, Integer categoryId,
 			String category, String title, String description, java.math.BigDecimal priceMin,
 			java.math.BigDecimal priceMax, String location, Double latitude, Double longitude,
-			Double coverageRadiusMeters, java.time.LocalDateTime publishedAt) {
+			Double coverageRadiusMeters, java.time.LocalDateTime publishedAt, Integer districtId) {
 	}
 
 	private static final RowMapper<ServiceBase> SERVICE_BASE_MAPPER = (rs, row) ->
@@ -643,7 +656,7 @@ public class ContentRepository {
 					rs.getBigDecimal("PrecioMinimo"), rs.getBigDecimal("PrecioMaximo"),
 					rs.getString("UbicacionAproximada"), nullableDouble(rs, "Latitud"),
 					nullableDouble(rs, "Longitud"), nullableDouble(rs, "RadioCoberturaMetros"),
-					rs.getTimestamp("FechaPublicacion").toLocalDateTime());
+					rs.getTimestamp("FechaPublicacion").toLocalDateTime(), rs.getInt("IdDistrito"));
 
 	private static final RowMapper<ImageView> IMAGE_MAPPER = (rs, row) ->
 			new ImageView(rs.getString("IdImagen"), rs.getString("UrlRemota"),

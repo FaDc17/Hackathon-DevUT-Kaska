@@ -118,4 +118,54 @@ class AuthServiceTests {
 		assertEquals(900, response.expiresIn());
 		assertEquals("user-123", jwtService.parse(response.accessToken()).id());
 	}
+
+	@Test
+	void deletesOnlyAuthenticatedAccountAfterPasswordAndExplicitConfirmation() {
+		Usuario user = new Usuario();
+		user.setId("user-123");
+		user.setEstado(true);
+		user.setContrasenaHash(passwordEncoder.encode("secure123"));
+		when(usuarios.findByIdAndEstadoTrueAndEliminadoFalse("user-123"))
+				.thenReturn(Optional.of(user));
+
+		authService.deleteAccount("user-123", new UserDtos.AccountDeletionRequest("secure123", "ELIMINAR"));
+
+		assertFalse(user.isEstado());
+		assertTrue(user.isEliminado());
+		verify(usuarios).softDeleteOwnedServices("user-123");
+		verify(usuarios).softDeleteOwnedPosts("user-123");
+		verify(usuarios).softDeleteOwnedServiceImages("user-123");
+		verify(usuarios).softDeleteOwnedPostImages("user-123");
+		verify(usuarios).softDeleteOwnedEmergencies("user-123");
+		verify(usuarios).softDeleteRelatedFavorites("user-123");
+		verify(usuarios).softDeleteRelatedReplies("user-123");
+		verify(usuarios).softDeleteRelatedReviews("user-123");
+		verify(usuarios).saveAndFlush(user);
+	}
+
+	@Test
+	void deletionRejectsWrongPasswordWithoutChangingData() {
+		Usuario user = new Usuario();
+		user.setEstado(true);
+		user.setContrasenaHash(passwordEncoder.encode("secure123"));
+		when(usuarios.findByIdAndEstadoTrueAndEliminadoFalse("user-123"))
+				.thenReturn(Optional.of(user));
+
+		assertThrows(AccountVerificationException.class, () -> authService.deleteAccount("user-123",
+				new UserDtos.AccountDeletionRequest("incorrect1", "ELIMINAR")));
+		assertTrue(user.isEstado());
+		assertFalse(user.isEliminado());
+		verify(usuarios, never()).softDeleteOwnedServices(any());
+		verify(usuarios, never()).saveAndFlush(any());
+	}
+
+	@Test
+	void deletionRejectsMissingConfirmationWithoutChangingData() {
+		Usuario user = new Usuario();
+		when(usuarios.findByIdAndEstadoTrueAndEliminadoFalse("user-123"))
+				.thenReturn(Optional.of(user));
+		assertThrows(IllegalArgumentException.class, () -> authService.deleteAccount("user-123",
+				new UserDtos.AccountDeletionRequest("secure123", "SI")));
+		verify(usuarios, never()).saveAndFlush(any());
+	}
 }

@@ -20,11 +20,13 @@ public final class UserDtos {
 			@NotBlank @Size(min = 5, max = 300) String address,
 			@NotNull Integer districtId,
 			@Size(max = 1000) String about) {
+		@Override public String toString() { return "RegisterRequest[credentials=REDACTED]"; }
 	}
 
 	public record LoginRequest(
 			@NotBlank @Size(max = 50) String username,
 			@NotBlank @Size(max = 72) String password) {
+		@Override public String toString() { return "LoginRequest[credentials=REDACTED]"; }
 	}
 
 	public record ProfileUpdateRequest(
@@ -48,6 +50,18 @@ public final class UserDtos {
 			String about) {
 	}
 
+	public record AccountDeletionRequest(
+			@NotBlank @Size(max = 72) String password,
+			@NotBlank @Pattern(regexp = "ELIMINAR") String confirmation) {
+		@Override public String toString() { return "AccountDeletionRequest[credentials=REDACTED]"; }
+	}
+
+	/** Public provider information: never exposes the private home address. */
+	public record NeighborProfile(String id, String username, Integer districtId,
+			String district, String province, Integer departmentId, String department, String about) {
+	}
+
 	public record AuthResponse(String accessToken, String tokenType, long expiresIn, PublicUser user) {
+		@Override public String toString() { return "AuthResponse[accessToken=REDACTED]"; }
 	}
 }

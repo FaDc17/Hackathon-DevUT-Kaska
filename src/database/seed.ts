@@ -1,9 +1,13 @@
-import { getDatabase } from './connection';
-import { initialPosts, initialServices, initialUsers } from '../data/demo';
-import { normalizeDistrictName } from './repositories/users';
+import { getDatabase } from "./connection";
+import { Capacitor } from "@capacitor/core";
+import { initialPosts, initialServices, initialUsers } from "../data/demo";
+import { normalizeDistrictName } from "./repositories/users";
 
-async function resolveDistrict(db: Awaited<ReturnType<typeof getDatabase>>, district: string): Promise<number> {
-  const result = await db.query('SELECT IdDistrito, NombreDistrito FROM Distritos;');
+async function resolveDistrict(
+  db: Awaited<ReturnType<typeof getDatabase>>,
+  district: string,
+): Promise<number> {
+  const result = await db.query("SELECT IdDistrito, NombreDistrito FROM Distritos;");
   const wanted = normalizeDistrictName(district);
   const id = result.values?.find(
     (row) => normalizeDistrictName(String(row.NombreDistrito)) === wanted,
@@ -13,8 +17,15 @@ async function resolveDistrict(db: Awaited<ReturnType<typeof getDatabase>>, dist
 }
 
 export async function seedDemoData(): Promise<void> {
+  // Fictitious accounts and businesses must never enter the native user database.
+  if (
+    Capacitor.isNativePlatform() ||
+    !import.meta.env.DEV ||
+    import.meta.env.VITE_ENABLE_LOCAL_AUTH !== "true"
+  )
+    return;
   const db = await getDatabase();
-  const userCount = await db.query('SELECT COUNT(*) AS value FROM Usuarios;');
+  const userCount = await db.query("SELECT COUNT(*) AS value FROM Usuarios;");
   if ((userCount.values?.[0]?.value ?? 0) === 0) {
     for (const user of initialUsers) {
       await db.run(
@@ -26,24 +37,38 @@ export async function seedDemoData(): Promise<void> {
     }
   }
 
-  const serviceCount = await db.query('SELECT COUNT(*) AS value FROM Servicios;');
+  const serviceCount = await db.query("SELECT COUNT(*) AS value FROM Servicios;");
   if ((serviceCount.values?.[0]?.value ?? 0) === 0) {
-    const categories = await db.query('SELECT IdCategoria, NombreCategoria FROM CategoriasServicio;');
+    const categories = await db.query(
+      "SELECT IdCategoria, NombreCategoria FROM CategoriasServicio;",
+    );
     const normalize = (value: string) =>
-      value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+      value
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .trim();
     for (const service of initialServices) {
-      const category = categories.values?.find(
-        (row) => normalize(String(row.NombreCategoria)) === normalize(service.category),
-      ) ?? categories.values?.[0];
+      const category =
+        categories.values?.find(
+          (row) => normalize(String(row.NombreCategoria)) === normalize(service.category),
+        ) ?? categories.values?.[0];
       await db.run(
         `INSERT INTO Servicios
           (IdServicio, IdUsuario, IdCategoria, Titulo, Descripcion, PrecioMinimo, PrecioMaximo,
            UbicacionAproximada, Latitud, Longitud, RadioCoberturaMetros, SyncEstado)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1000, 'sincronizado');`,
         [
-          String(service.id), service.ownerId, Number(category?.IdCategoria),
-          service.title, service.description, service.priceMin, service.priceMax,
-          service.location, service.lat ?? null, service.lng ?? null,
+          String(service.id),
+          service.ownerId,
+          Number(category?.IdCategoria),
+          service.title,
+          service.description,
+          service.priceMin,
+          service.priceMax,
+          service.location,
+          service.lat ?? null,
+          service.lng ?? null,
         ],
       );
       await db.run(
@@ -62,9 +87,9 @@ export async function seedDemoData(): Promise<void> {
     }
   }
 
-  const postCount = await db.query('SELECT COUNT(*) AS value FROM Publicaciones;');
+  const postCount = await db.query("SELECT COUNT(*) AS value FROM Publicaciones;");
   if ((postCount.values?.[0]?.value ?? 0) === 0) {
-    const types = await db.query('SELECT IdTipoPublicacion, NombreTipo FROM TiposPublicacion;');
+    const types = await db.query("SELECT IdTipoPublicacion, NombreTipo FROM TiposPublicacion;");
     for (const post of initialPosts) {
       const type = types.values?.find(
         (row) => String(row.NombreTipo).toLowerCase() === post.category.toLowerCase(),
@@ -75,8 +100,14 @@ export async function seedDemoData(): Promise<void> {
            Latitud, Longitud, SyncEstado)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'sincronizado');`,
         [
-          String(post.id), post.ownerId, Number(type?.IdTipoPublicacion), post.title,
-          post.description, post.location, post.lat ?? null, post.lng ?? null,
+          String(post.id),
+          post.ownerId,
+          Number(type?.IdTipoPublicacion),
+          post.title,
+          post.description,
+          post.location,
+          post.lat ?? null,
+          post.lng ?? null,
         ],
       );
       if (post.image) {
@@ -86,7 +117,7 @@ export async function seedDemoData(): Promise<void> {
           [`img-post-${post.id}`, String(post.id), post.image],
         );
       }
-      if (post.category === 'Emergencia') {
+      if (post.category === "Emergencia") {
         await db.run(
           `INSERT INTO Emergencias (IdEmergencia, IdPublicacion, EstadoEmergencia, SyncEstado)
            VALUES (?, ?, 'reportada', 'sincronizado');`,

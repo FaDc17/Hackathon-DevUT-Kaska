@@ -75,6 +75,70 @@ class ContentServiceTests {
 	}
 
 	@Test
+	void deleteServiceIsRetryableButStillChecksOriginalOwner() {
+		when(repository.serviceOwnerIncludingDeleted("svc-1")).thenReturn("user-1");
+		service.deleteService("user-1", "svc-1");
+		service.deleteService("user-1", "svc-1");
+		verify(repository, org.mockito.Mockito.times(2)).softDeleteService("svc-1");
+		assertThrows(AccessDeniedException.class, () -> service.deleteService("user-2", "svc-1"));
+		verify(repository, org.mockito.Mockito.times(2)).softDeleteService("svc-1");
+	}
+
+	@Test
+	void deletePostUsesTombstoneOwnerAndRejectsOtherUsers() {
+		when(repository.postOwnerIncludingDeleted("post-1")).thenReturn("user-1");
+		service.deletePost("user-1", "post-1");
+		service.deletePost("user-1", "post-1");
+		assertThrows(AccessDeniedException.class, () -> service.deletePost("user-2", "post-1"));
+		verify(repository, org.mockito.Mockito.times(2)).softDeletePost("post-1");
+	}
+
+	@Test
+	void syncDeletionAcceptsMinimalPayloadAndPreservesOriginalIds() {
+		when(repository.serviceOwnerIncludingDeleted("svc-uuid-original")).thenReturn("user-1");
+		service.applySyncOperation("user-1", new ContentDtos.SyncOperation("op-delete", "Servicios",
+				"eliminar", "svc-uuid-original", new ObjectMapper().readTree("{}")));
+		verify(repository).softDeleteService("svc-uuid-original");
+	}
+
+	@Test
+	void syncReplyUsesJwtOwnerRatherThanLocalPresentationFields() {
+		when(repository.reply("reply-original")).thenReturn(Optional.of(new ContentDtos.ReplyView(
+				"reply-original", "post-1", "user-1", "Real owner", "Hola", LocalDateTime.now())));
+		service.applySyncOperation("user-1", new ContentDtos.SyncOperation("op-reply", "RespuestasPublicacion",
+				"crear", "reply-original", new ObjectMapper().readTree("""
+				{"id":"reply-original","postId":"post-1","message":"Hola",
+				"userId":"other-user","username":"Presentación local","createdAt":123}
+				""")));
+		verify(repository).insertReply("reply-original", "post-1", "user-1", "Hola");
+	}
+
+	@Test
+	void syncReviewUsesJwtOwnerRatherThanLocalPresentationFields() {
+		when(repository.review("review-original")).thenReturn(Optional.of(new ContentDtos.ReviewView(
+				"review-original", "svc-1", "user-1", "Real owner", 5, "Gracias", LocalDateTime.now())));
+		service.applySyncOperation("user-1", new ContentDtos.SyncOperation("op-review", "ResenasServicio",
+				"actualizar", "review-original", new ObjectMapper().readTree("""
+				{"id":"review-original","serviceId":"svc-1","rating":5,"comment":"Gracias",
+				"userId":"other-user","username":"Presentación local","createdAt":"2026-11-08"}
+				""")));
+		verify(repository).insertReview("review-original", "svc-1", "user-1", new ContentDtos.ReviewRequest("review-original", 5, "Gracias"));
+	}
+
+	@Test
+	void createDoesNotRestoreAnExistingDeletedService() {
+		ServiceRequest request = new ServiceRequest("svc-1", 3, "Servicio", "Descripción",
+				null, null, null, null, null, null, null);
+		when(repository.categoryExists(3)).thenReturn(true);
+		when(repository.serviceExists("svc-1")).thenReturn(true);
+		when(repository.serviceOwner("svc-1"))
+				.thenThrow(new com.kuska.api.catalog.ResourceNotFoundException("Servicio no encontrado."));
+		assertThrows(com.kuska.api.catalog.ResourceNotFoundException.class,
+				() -> service.createService("user-1", request));
+		verify(repository, never()).insertService("user-1", request);
+	}
+
+	@Test
 	void rejectsPricesOutsideAzureDecimalPrecision() {
 		ServiceRequest request = new ServiceRequest(
 				"svc-1", 3, "Carpintería", "Reparaciones",

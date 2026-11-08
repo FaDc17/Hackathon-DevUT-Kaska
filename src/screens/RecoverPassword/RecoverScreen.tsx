@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 import { Icon } from "../../components/common/CommonComponents";
 import type { Screen } from "../../types";
 
-export function RecoverScreen({ go, notify }: { go: (s: Screen) => void; notify: (s: string) => void }) {
+export function RecoverScreen({
+  go,
+  notify,
+}: {
+  go: (s: Screen) => void;
+  notify: (s: string) => void;
+}) {
   const [sent, setSent] = useState(false);
   return (
     <section className="simple-auth">
@@ -21,7 +27,7 @@ export function RecoverScreen({ go, notify }: { go: (s: Screen) => void; notify:
           onSubmit={(e) => {
             e.preventDefault();
             setSent(true);
-            notify("Solicitud simulada correctamente");
+            notify("La recuperación de contraseña todavía no está disponible.");
           }}
         >
           <label>
@@ -33,8 +39,8 @@ export function RecoverScreen({ go, notify }: { go: (s: Screen) => void; notify:
       ) : (
         <div className="success-card">
           <Icon name="check" />
-          <h3>Solicitud registrada</h3>
-          <p>En una app conectada recibirías instrucciones para recuperar tu acceso.</p>
+          <h3>Recuperación no disponible</h3>
+          <p>Aún no hay un servicio de recuperación conectado. Tu contraseña no se ha cambiado.</p>
         </div>
       )}
       <button className="secondary-button" onClick={() => go("login")}>

@@ -124,7 +124,8 @@ public final class ContentDtos {
 			Double coverageRadiusMeters,
 			LocalDateTime publishedAt,
 			List<ImageView> images,
-			List<ReviewView> reviews) {
+			List<ReviewView> reviews,
+			Integer districtId) {
 	}
 
 	public record ReplyView(
@@ -161,6 +162,7 @@ public final class ContentDtos {
 			LocalDateTime publishedAt,
 			List<ImageView> images,
 			List<ReplyView> replies,
-			EmergencyView emergency) {
+			EmergencyView emergency,
+			Integer districtId) {
 	}
 }

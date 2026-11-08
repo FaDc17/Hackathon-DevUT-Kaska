@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Post, Service } from "../../types";
-import { buscarPublicacionesLocales, buscarServiciosLocales } from "./hybridSearch";
+import {
+  buscarPublicacionesLocales,
+  buscarServiciosLocales,
+  buscarServiciosInterpretados,
+  extraerPresupuesto,
+  seccionSolicitada,
+} from "./hybridSearch";
 
 const services: Service[] = [
   {
@@ -104,7 +110,11 @@ const posts: Post[] = [
 
 describe("búsqueda local del agente", () => {
   it("filtra servicios por categoría y distrito conservando sus identificadores y proveedores", () => {
-    const results = buscarServiciosLocales("Busco un electricista en Breña", services, "Pueblo Libre");
+    const results = buscarServiciosLocales(
+      "Busco un electricista en Breña",
+      services,
+      "Pueblo Libre",
+    );
 
     expect(results.map(({ id, ownerId }) => ({ id, ownerId }))).toEqual([
       { id: 3, ownerId: "ana-perez" },
@@ -152,5 +162,92 @@ describe("búsqueda local del agente", () => {
     );
 
     expect(results.map((post) => post.id)).toEqual([12]);
+  });
+
+  it("trata máximo como inclusivo y no confunde una búsqueda distrital con navegación", () => {
+    expect(extraerPresupuesto("máximo S/ 50")).toEqual({ max: 50, estricto: false });
+    expect(seccionSolicitada("Muéstrame servicios de mi distrito")).toBeNull();
+    expect(seccionSolicitada("Muéstrame el perfil del proveedor")).toBeNull();
+    expect(
+      buscarServiciosLocales("Muéstrame servicios de mi distrito", services, "Breña"),
+    ).toHaveLength(4);
+  });
+
+  it("no devuelve servicios del usuario cuando pide un distrito sin registros", () => {
+    expect(buscarServiciosLocales("Busco un electricista en Huancayo", services, "Breña")).toEqual(
+      [],
+    );
+  });
+
+  it("conserva UUID de SQLite y excluye un máximo desconocido o inválido", () => {
+    const candidates = [
+      { ...services[1], id: "service-real-uuid" },
+      { ...services[1], id: "unknown", priceMax: undefined },
+      { ...services[1], id: "invalid", priceMax: Number.NaN },
+    ] as Service[];
+    expect(
+      buscarServiciosLocales("electricista hasta 50 soles", candidates, "Breña").map((s) => s.id),
+    ).toEqual(["service-real-uuid"]);
+  });
+
+  it("puede encontrar restaurantes si el catálogo real ya los contiene sin inventar rangos", () => {
+    const restaurant = {
+      ...services[1],
+      title: "Restaurante registrado",
+      category: "Restaurantes",
+      description: "Menú disponible",
+      priceMin: 30,
+      priceMax: 40,
+    };
+    expect(
+      buscarServiciosLocales("restaurante hasta 50 soles", [restaurant, services[1]], "Breña"),
+    ).toEqual([restaurant]);
+  });
+
+  it("mi distrito distingue IDs aunque dos lugares tengan el mismo nombre", () => {
+    const local = { ...services[1], district: "Bellavista", districtId: 100 };
+    const homonym = {
+      ...services[1],
+      id: "other-bellavista",
+      district: "Bellavista",
+      districtId: 999,
+    };
+    expect(
+      buscarServiciosLocales("electricista en mi distrito", [local, homonym], "Bellavista", 100),
+    ).toEqual([local]);
+  });
+
+  it("un presupuesto no vuelve irrelevante el oficio solicitado", () => {
+    expect(buscarServiciosLocales("busco mecánico hasta 50 soles", services, "Breña")).toEqual([]);
+  });
+
+  it("no recomienda servicios ni publicaciones DEMO conservadas en el dispositivo como registros reales", () => {
+    const demoService = { ...services[1], id: "legacy-service", isDemo: true };
+    const demoPost = { ...posts[1], id: "legacy-post", isDemo: true };
+    expect(
+      buscarServiciosLocales("electricista hasta 50 soles", [demoService, services[1]], "Breña"),
+    ).toEqual([services[1]]);
+    expect(
+      buscarPublicacionesLocales("solidaridad en Breña", [demoPost, posts[1]], "Breña"),
+    ).toEqual([posts[1]]);
+  });
+
+  it("usa la intención Cloudflare sobre servicios reales manteniendo límites explícitos", () => {
+    expect(
+      buscarServiciosInterpretados(
+        "Necesito un electricista en Breña por menos de 50 soles",
+        services,
+        "Pueblo Libre",
+        { categoria: "hogar", distrito: "Bellavista", maxPrecio: 100, estricto: false },
+      ).map((s) => s.id),
+    ).toEqual([3]);
+    expect(
+      buscarServiciosInterpretados("Tengo una avería de corriente", services, "Breña", {
+        categoria: "electricidad",
+        distrito: "Breña",
+        maxPrecio: 50,
+        estricto: false,
+      }).map((s) => s.id),
+    ).toEqual([3, 4]);
   });
 });

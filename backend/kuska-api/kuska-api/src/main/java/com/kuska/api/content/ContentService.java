@@ -96,7 +96,7 @@ public class ContentService {
 
 	@Transactional
 	public void deleteService(String userId, String id) {
-		requireOwner(content.serviceOwner(requireId(id)), userId);
+		requireOwner(content.serviceOwnerIncludingDeleted(requireId(id)), userId);
 		content.softDeleteService(id);
 	}
 
@@ -213,7 +213,7 @@ public class ContentService {
 
 	@Transactional
 	public void deletePost(String userId, String id) {
-		requireOwner(content.postOwner(requireId(id)), userId);
+		requireOwner(content.postOwnerIncludingDeleted(requireId(id)), userId);
 		content.softDeletePost(id);
 	}
 
@@ -350,6 +350,10 @@ public class ContentService {
 	}
 
 	private void syncService(String userId, String action, ContentDtos.SyncOperation operation) {
+		if ("eliminar".equals(action)) {
+			deleteService(userId, operation.entityId());
+			return;
+		}
 		ServiceRequest request = convert(operation.payload(), ServiceRequest.class);
 		validateRequest(request);
 		requireMatchingId(operation.entityId(), request.id());
@@ -401,6 +405,10 @@ public class ContentService {
 	}
 
 	private void syncPost(String userId, String action, ContentDtos.SyncOperation operation) {
+		if ("eliminar".equals(action)) {
+			deletePost(userId, operation.entityId());
+			return;
+		}
 		PostRequest request = convert(operation.payload(), PostRequest.class);
 		validateRequest(request);
 		requireMatchingId(operation.entityId(), request.id());

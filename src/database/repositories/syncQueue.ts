@@ -1,4 +1,5 @@
 import { getDatabase } from "../connection";
+import { getSecureSession } from "../../services/secureSession";
 
 export type PendingSyncOperation = {
   IdOperacion: number;
@@ -7,6 +8,8 @@ export type PendingSyncOperation = {
   Operacion: "crear" | "actualizar" | "eliminar";
   Payload: string | null;
   Intentos: number;
+  OwnerId?: string;
+  ClientOperationId: string;
 };
 
 type SyncableEntity = {
@@ -31,17 +34,65 @@ const syncableEntities: Record<string, SyncableEntity> = {
   Emergencias: { table: "Emergencias", idColumn: "IdEmergencia", hasRemoteId: true },
 };
 
+let queueMigration: Promise<void> | null = null;
+export function ensureQueueOwnership(): Promise<void> {
+  if (queueMigration) return queueMigration;
+  queueMigration = (async () => {
+    const db = await getDatabase();
+    const columns = await db.query("PRAGMA table_info(ColaSincronizacion);");
+    if (!columns.values?.some((column) => column.name === "OwnerId")) {
+      await db.run("ALTER TABLE ColaSincronizacion ADD COLUMN OwnerId TEXT;");
+    }
+    if (!columns.values?.some((column) => column.name === "ClientOperationId")) {
+      await db.run("ALTER TABLE ColaSincronizacion ADD COLUMN ClientOperationId TEXT;");
+    }
+    await db.run(
+      "UPDATE ColaSincronizacion SET ClientOperationId=lower(hex(randomblob(16))) WHERE ClientOperationId IS NULL;",
+    );
+    // Associate legacy operations only when a real local owner can be identified.
+    for (const [entity, mapping] of Object.entries(syncableEntities)) {
+      if (["ImagenesServicio", "ImagenesPublicacion", "Emergencias"].includes(entity)) {
+        const parent = entity === "ImagenesServicio" ? "Servicios" : "Publicaciones";
+        const parentId = entity === "ImagenesServicio" ? "IdServicio" : "IdPublicacion";
+        await db.run(
+          `UPDATE ColaSincronizacion SET OwnerId=(
+          SELECT COALESCE(u.RemoteId,u.IdUsuario) FROM ${mapping.table} e JOIN ${parent} p ON p.${parentId}=e.${parentId}
+          JOIN Usuarios u ON u.IdUsuario=p.IdUsuario WHERE e.${mapping.idColumn}=ColaSincronizacion.EntidadId LIMIT 1)
+          WHERE Entidad=? AND OwnerId IS NULL;`,
+          [entity],
+        );
+        continue;
+      }
+      const ownerColumn = "IdUsuario";
+      await db.run(
+        `UPDATE ColaSincronizacion SET OwnerId = (
+        SELECT COALESCE(u.RemoteId,u.IdUsuario) FROM ${mapping.table} e JOIN Usuarios u ON u.IdUsuario=e.${ownerColumn}
+        WHERE e.${mapping.idColumn}=ColaSincronizacion.EntidadId OR e.RemoteId=ColaSincronizacion.EntidadId LIMIT 1)
+        WHERE Entidad=? AND OwnerId IS NULL;`,
+        [entity],
+      );
+    }
+  })().catch((error) => {
+    queueMigration = null;
+    throw error;
+  });
+  return queueMigration;
+}
+
 export async function enqueueSyncOperation(
   entity: string,
   entityId: string,
   operation: PendingSyncOperation["Operacion"],
   payload: unknown,
 ): Promise<void> {
+  await ensureQueueOwnership();
   const db = await getDatabase();
+  const session = await getSecureSession();
+  if (!session) throw new Error("Inicia sesión para guardar los cambios.");
   const result = await db.run(
-    `INSERT INTO ColaSincronizacion (Entidad, EntidadId, Operacion, Payload)
-     VALUES (?, ?, ?, ?);`,
-    [entity, entityId, operation, JSON.stringify(payload)],
+    `INSERT INTO ColaSincronizacion (Entidad, EntidadId, Operacion, Payload, OwnerId, ClientOperationId)
+     VALUES (?, ?, ?, ?, ?, ?);`,
+    [entity, entityId, operation, JSON.stringify(payload), session.userId, crypto.randomUUID()],
   );
   if (!result.changes?.lastId || result.changes.lastId < 1) {
     throw new Error("SQLite no confirmó la creación de la operación pendiente.");
@@ -52,13 +103,19 @@ export async function enqueueSyncOperation(
 }
 
 export async function pendingSyncOperations(limit = 100): Promise<PendingSyncOperation[]> {
+  await ensureQueueOwnership();
+  const session = await getSecureSession();
+  if (!session) return [];
   const db = await getDatabase();
   const result = await db.query(
-    `SELECT IdOperacion, Entidad, EntidadId, Operacion, Payload, Intentos
-     FROM ColaSincronizacion
-     ORDER BY IdOperacion ASC
+    `SELECT q.IdOperacion, q.Entidad, q.EntidadId, q.Operacion, q.Payload, q.Intentos, q.OwnerId, q.ClientOperationId
+     FROM ColaSincronizacion q
+     WHERE q.OwnerId=? AND COALESCE(q.ErrorUltimo,'') NOT IN ('DATA_CONFLICT','INVALID_OPERATION','FORBIDDEN','NOT_FOUND','IMAGE_UPLOAD_UNAVAILABLE') AND NOT EXISTS (
+       SELECT 1 FROM ColaSincronizacion earlier WHERE earlier.OwnerId=q.OwnerId
+       AND earlier.Entidad=q.Entidad AND earlier.EntidadId=q.EntidadId AND earlier.IdOperacion<q.IdOperacion)
+     ORDER BY q.IdOperacion ASC
      LIMIT ?;`,
-    [limit],
+    [session.userId, limit],
   );
   return (result.values ?? []) as PendingSyncOperation[];
 }
@@ -91,8 +148,29 @@ export async function markSyncOperationSucceeded(
 ): Promise<void> {
   const db = await getDatabase();
   const mapping = syncableEntities[entity];
-  if (mapping) await setEntitySyncState(db, mapping, entityId, "sincronizado");
-  await db.run("DELETE FROM ColaSincronizacion WHERE IdOperacion = ?;", [id]);
+  const session = await getSecureSession();
+  const statements = [
+    {
+      statement: "DELETE FROM ColaSincronizacion WHERE IdOperacion = ?;",
+      values: [id] as unknown[],
+    },
+  ];
+  if (mapping) {
+    const condition =
+      mapping.table === "Usuarios" ? "(IdUsuario=? OR RemoteId=?)" : `${mapping.idColumn}=?`;
+    const values: unknown[] = mapping.table === "Usuarios" ? [entityId, entityId] : [entityId];
+    const favoriteOwner =
+      mapping.table === "ServiciosFavoritos"
+        ? " AND IdUsuario IN (SELECT IdUsuario FROM Usuarios WHERE IdUsuario=? OR RemoteId=?)"
+        : "";
+    if (favoriteOwner) values.push(session?.userId ?? "", session?.userId ?? "");
+    statements.push({
+      statement: `UPDATE ${mapping.table} SET SyncEstado='sincronizado',RemoteId=COALESCE(RemoteId,?)
+      WHERE ${condition}${favoriteOwner} AND NOT EXISTS (SELECT 1 FROM ColaSincronizacion WHERE Entidad=? AND EntidadId=?);`,
+      values: [entityId, ...values, entity, entityId],
+    });
+  }
+  await db.executeSet(statements, true);
 }
 
 async function setEntitySyncState(

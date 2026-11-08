@@ -10,7 +10,7 @@ export function Emergency({
   back,
 }: {
   posts: Post[];
-  openPost: (id: number) => void;
+  openPost: (id: Post["id"]) => void;
   openModal: () => void;
   go: (s: Screen) => void;
   back: () => void;

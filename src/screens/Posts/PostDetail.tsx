@@ -12,31 +12,46 @@ export function PostDetail({
   back,
   onComment,
   openProfile,
+  onEdit,
+  onDelete,
 }: {
   post: Post;
   user: User;
   back: () => void;
-  onComment: (comment: Comment) => void;
+  onComment: (comment: Comment) => Promise<void>;
   openProfile: (id: string | undefined, name: string) => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }) {
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState("");
-  const submitComment = (event: FormEvent<HTMLFormElement>) => {
+  const [busy, setBusy] = useState(false);
+  const [draftId, setDraftId] = useState(() => crypto.randomUUID());
+  const submitComment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (busy) return;
     const clean = comment.trim();
     if (!clean) {
       setCommentError("Escribe un comentario antes de publicar.");
       return;
     }
-    onComment({
-      id: Date.now(),
-      user: user.name,
-      userId: user.id,
-      content: clean,
-      createdAt: Date.now(),
-    });
-    setComment("");
-    setCommentError("");
+    setBusy(true);
+    try {
+      await onComment({
+        id: draftId,
+        user: user.name,
+        userId: user.id,
+        content: clean,
+        createdAt: Date.now(),
+      });
+      setComment("");
+      setDraftId(crypto.randomUUID());
+      setCommentError("");
+    } catch (error) {
+      setCommentError(error instanceof Error ? error.message : "No se pudo guardar el comentario.");
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <section className="detail-page community-detail">
@@ -58,6 +73,32 @@ export function PostDetail({
           <span className="time">{timeAgo(post.createdAt)}</span>
         </div>
         <h1>{post.title}</h1>
+        {post.isDemo && (
+          <p className="verification-note">DEMO · Esta publicación contiene datos de ejemplo.</p>
+        )}
+        {post.syncStatus === "pendiente" && (
+          <p className="form-error" role="status">
+            Guardada en el teléfono. Se enviará cuando haya conexión con Kuska.
+          </p>
+        )}
+        {post.syncStatus === "error" && (
+          <p className="form-error" role="status">
+            No se pudo enviar esta publicación. Sigue guardada en el teléfono.
+          </p>
+        )}
+        {post.imagePending && (
+          <p className="range-help">Fotografía guardada en este dispositivo; pendiente de subir.</p>
+        )}
+        {!!post.ownerId && [user.id, user.remoteId].includes(post.ownerId) && (
+          <div className="modal-actions">
+            <button className="secondary-button" onClick={onEdit}>
+              Editar publicación
+            </button>
+            <button className="secondary-button" onClick={onDelete}>
+              Eliminar publicación
+            </button>
+          </div>
+        )}
         <button
           className="provider provider-link"
           onClick={() => openProfile(post.ownerId, post.owner)}
@@ -127,6 +168,7 @@ export function PostDetail({
             <label htmlFor="community-comment">Escribe un comentario...</label>
             <textarea
               id="community-comment"
+              maxLength={2000}
               value={comment}
               onChange={(event) => {
                 setComment(event.target.value);
@@ -135,7 +177,9 @@ export function PostDetail({
               placeholder="Comparte información útil y respetuosa"
             />
             {commentError && <span className="field-error">{commentError}</span>}
-            <button className="primary-button">Comentar</button>
+            <button className="primary-button" disabled={busy}>
+              {busy ? "Guardando…" : "Comentar"}
+            </button>
           </form>
         </div>
       </div>

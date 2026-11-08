@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import type { Post, Screen, Service } from "../../types";
 import { getServicePriceLabel } from "../../utils/services";
 import { navItems } from "../../data/demo";
@@ -293,17 +293,18 @@ export function Rating({ service }: { service: Service }) {
 export function ServiceCard({ service, onClick }: { service: Service; onClick: () => void }) {
   return (
     <button className="service-card" onClick={onClick}>
-      <img src={service.image} alt="" />
+      {service.image && <img src={service.image} alt="" />}
       <div className="service-card-copy">
         <div className="row between">
           <span className="chip blue">{service.category}</span>
           <span className="price">{getServicePriceLabel(service)}</span>
         </div>
         <h3>{service.title}</h3>
+        {service.isDemo && <span className="chip">DEMO · Datos de ejemplo</span>}
         <p>{service.description}</p>
         <span className="service-phone">
           <Icon name="phone" size={14} />
-          {formatPhone(service.contactPhone)}
+          {service.isDemo ? "DEMO · Sin contacto verificado" : formatPhone(service.contactPhone)}
         </span>
         <div className="row between meta">
           <span>
@@ -329,6 +330,7 @@ export function PostCard({ post, onClick }: { post: Post; onClick: () => void })
         </span>
       </div>
       <h3>{post.title}</h3>
+      {post.isDemo && <span className="chip">DEMO · Datos de ejemplo</span>}
       <p>{post.description}</p>
       <span className="location">
         <Icon name="pin" size={15} />
@@ -347,16 +349,69 @@ export function Modal({
   children: ReactNode;
   onClose: () => void;
 }) {
+  const titleId = useId();
+  const sheet = useRef<HTMLElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const node = sheet.current;
+    node?.querySelector<HTMLElement>('input:not([type="file"]), select, textarea, button')?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close.current();
+      }
+      if (event.key !== "Tab" || !node) return;
+      const controls = [
+        ...node.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]',
+        ),
+      ].filter((element) => element.getClientRects().length > 0);
+      const first = controls[0],
+        last = controls[controls.length - 1];
+      if (!first) {
+        event.preventDefault();
+        node.focus();
+        return;
+      }
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || !node.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        last.focus();
+      } else if (
+        !event.shiftKey &&
+        (document.activeElement === last || !node.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", keydown);
+    return () => {
+      document.removeEventListener("keydown", keydown);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
   return (
     <div className="modal-backdrop">
-      <section className="modal-sheet" role="dialog" aria-modal="true">
+      <section
+        ref={sheet}
+        tabIndex={-1}
+        className="modal-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <div className="modal-top">
-          <button className="icon-button" onClick={onClose}>
+          <button className="icon-button" onClick={onClose} aria-label="Cerrar formulario">
             <Icon name="back" />
           </button>
           <div>
             <span className="eyebrow">KUSKA</span>
-            <h2>{title}</h2>
+            <h2 id={titleId}>{title}</h2>
           </div>
         </div>
         <div className="modal-body">{children}</div>

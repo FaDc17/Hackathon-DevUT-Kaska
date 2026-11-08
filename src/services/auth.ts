@@ -1,5 +1,7 @@
 import { apiRequest } from "./apiClient";
 import type { User } from "../types";
+import { cachedList, cacheRemoteList } from "./remoteRead";
+import { ApiError } from "./apiClient";
 
 export type PublicUser = {
   id: string;
@@ -78,4 +80,20 @@ export function updateMyProfile(
 
 export function logoutRequest(): Promise<void> {
   return apiRequest<void>("/api/auth/logout", { method: "POST" });
+}
+
+export type NeighborProfile = Omit<PublicUser, "phone" | "address">;
+export async function getPublicProfile(id: string): Promise<NeighborProfile> {
+  const path = `/api/usuarios/${encodeURIComponent(id)}/publico`;
+  try {
+    const profile = await apiRequest<NeighborProfile>(path);
+    await cacheRemoteList(path, [profile]);
+    return profile;
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 0 || error.status >= 500)) {
+      const cached = await cachedList<NeighborProfile>(path);
+      if (cached?.[0]) return cached[0];
+    }
+    throw error;
+  }
 }

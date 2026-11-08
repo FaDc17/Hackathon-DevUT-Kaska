@@ -16,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.kuska.api.user.DuplicateUserException;
+import com.kuska.api.user.AccountVerificationException;
 import com.kuska.api.content.ResourceConflictException;
 
 @RestControllerAdvice
@@ -69,6 +70,12 @@ public class ApiExceptionHandler {
 		return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(new ErrorResponse(
 				Instant.now(), HttpStatus.UNAUTHORIZED.value(), "INVALID_CREDENTIALS",
 				"Usuario o contraseña incorrectos."));
+	}
+
+	@ExceptionHandler(AccountVerificationException.class)
+	public ResponseEntity<ErrorResponse> handleAccountVerification(AccountVerificationException exception) {
+		return ResponseEntity.status(HttpStatus.FORBIDDEN).body(new ErrorResponse(
+				Instant.now(), HttpStatus.FORBIDDEN.value(), "ACCOUNT_VERIFICATION_FAILED", exception.getMessage()));
 	}
 
 	@ExceptionHandler(DuplicateUserException.class)

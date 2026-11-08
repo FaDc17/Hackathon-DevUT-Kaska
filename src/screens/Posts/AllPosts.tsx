@@ -8,7 +8,7 @@ export function AllPosts({
   back,
 }: {
   posts: Post[];
-  openPost: (id: number) => void;
+  openPost: (id: string | number) => void;
   back: () => void;
 }) {
   return (

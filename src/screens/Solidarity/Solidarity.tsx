@@ -11,7 +11,7 @@ export function Solidarity({
   back,
 }: {
   posts: Post[];
-  openPost: (id: number) => void;
+  openPost: (id: string | number) => void;
   openModal: () => void;
   showAll: () => void;
   back: () => void;
