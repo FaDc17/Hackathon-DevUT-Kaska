@@ -1,5 +1,6 @@
 import type { ChatMessage, Post, Screen, Service } from "../../types";
 import { getSecureSession } from "../../services/secureSession";
+import type { AgentAppAction, AppGuideState } from "./appAssistance";
 
 export type ChatEntry = ChatMessage & {
   servicios?: Service[];
@@ -7,6 +8,7 @@ export type ChatEntry = ChatMessage & {
   modo?: "ia" | "remoto" | "local";
   acciones?: Screen[];
   sugerencias?: string[];
+  appActions?: AgentAppAction[];
 };
 
 export type ConversationContext = {
@@ -22,13 +24,14 @@ export type ConversationContext = {
 export type ChatSnapshot = {
   messages: ChatEntry[];
   context: ConversationContext | null;
+  guidance?: AppGuideState | null;
 };
 
 const MAX_MESSAGES = 60;
 const MEMORY_TTL_MS = 30 * 60 * 1000;
 
 // Conversation data and the session identity stay in memory, never in disk storage.
-let identity: { userId: string; accessToken: string } | null = null;
+let identity: { userId: string; sessionKey: string } | null = null;
 let snapshot: ChatSnapshot | null = null;
 let savedAt = 0;
 let restoreVersion = 0;
@@ -48,6 +51,7 @@ function copySnapshot(value: ChatSnapshot): ChatSnapshot {
       })),
       acciones: entry.acciones ? [...entry.acciones] : undefined,
       sugerencias: entry.sugerencias ? [...entry.sugerencias] : undefined,
+      ...(entry.appActions ? { appActions: entry.appActions.map(action => ({ ...action })) } : {}),
     })),
     context: value.context
       ? {
@@ -56,6 +60,7 @@ function copySnapshot(value: ChatSnapshot): ChatSnapshot {
           postIds: [...value.context.postIds],
         }
       : null,
+    ...(value.guidance !== undefined ? { guidance: value.guidance ? { ...value.guidance } : null } : {}),
   };
 }
 
@@ -95,10 +100,11 @@ export async function restoreChat(): Promise<ChatSnapshot | null> {
     forgetSession();
     return null;
   }
-  if (identity?.userId !== session.userId || identity.accessToken !== session.accessToken) {
+  const sessionKey = session.sessionId || session.accessToken;
+  if (identity?.userId !== session.userId || identity.sessionKey !== sessionKey) {
     clearChat();
   }
-  identity = { userId: session.userId, accessToken: session.accessToken };
+  identity = { userId: session.userId, sessionKey };
   if (!snapshot) return null;
   if (Date.now() - savedAt >= MEMORY_TTL_MS || Date.now() < savedAt) {
     clearChat();

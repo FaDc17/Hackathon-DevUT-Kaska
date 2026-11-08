@@ -40,7 +40,7 @@ export async function renewSessionIfNeeded(allowRenewal = true): Promise<void> {
       const result = await apiRequest<{ accessToken: string; user: { id: string } }>("/api/auth/refresh", { method: "POST" });
       if ((await getSecureSession())?.accessToken !== session.accessToken) return;
       if (result.user.id !== session.userId || (tokenExpiresAt(result.accessToken) ?? 0) <= Date.now()) throw new Error("Sesión inválida");
-      await saveSecureSession({ userId: session.userId, accessToken: result.accessToken });
+      await saveSecureSession({ ...session, accessToken: result.accessToken });
     } catch {
       retryRenewalAt = Date.now() + 60_000;
       // Network and missing-endpoint failures never invalidate an otherwise valid JWT.

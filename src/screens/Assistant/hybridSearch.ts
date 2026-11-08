@@ -136,6 +136,12 @@ export function seccionSolicitada(consulta: string): Screen | null {
 
 export function nombreSeccion(destino: Screen): string {
   const nombres: Partial<Record<Screen, string>> = {
+    allServices: "Todos los servicios",
+    allPosts: "Todas las publicaciones",
+    serviceDetail: "el detalle del servicio",
+    postDetail: "el detalle de la publicación",
+    neighborProfile: "el perfil del proveedor",
+    tutorial: "el tutorial",
     channels: "Canales de ayuda",
     emergency: "Emergencia",
     profile: "Mi perfil",

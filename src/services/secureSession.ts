@@ -6,18 +6,19 @@ type SecureStoragePlugin = {
   remove(): Promise<void>;
 };
 
-export type SecureSession = { accessToken: string; userId: string };
+export type SecureSession = { accessToken: string; userId: string; sessionId?: string };
 
 const secureStorage = registerPlugin<SecureStoragePlugin>("SecureStorage");
 let webSession: SecureSession | null = null;
 
 export async function saveSecureSession(session: SecureSession): Promise<void> {
-  const value = JSON.stringify(session);
+  const identified = { ...session, sessionId: session.sessionId || crypto.randomUUID() };
+  const value = JSON.stringify(identified);
   if (Capacitor.isNativePlatform()) {
     await secureStorage.set({ value });
     return;
   }
-  webSession = session;
+  webSession = identified;
 }
 
 export async function getSecureSession(): Promise<SecureSession | null> {
@@ -30,9 +31,10 @@ export async function getSecureSession(): Promise<SecureSession | null> {
   if (!value) return null;
   try {
     const session = JSON.parse(value) as Partial<SecureSession>;
-    return typeof session.accessToken === "string" && typeof session.userId === "string"
-      ? { accessToken: session.accessToken, userId: session.userId }
-      : null;
+    if (typeof session.accessToken !== "string" || typeof session.userId !== "string") return null;
+    const sessionId = typeof session.sessionId === "string" && session.sessionId ? session.sessionId
+      : "legacy-" + Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(session.accessToken))), byte => byte.toString(16).padStart(2, "0")).join("");
+    return { accessToken: session.accessToken, userId: session.userId, sessionId };
   } catch {
     await clearSecureSession();
     return null;

@@ -23,6 +23,13 @@ it("renews once before a request and sends the renewed short-lived token", async
   expect(state.fetch.mock.calls[1][1].headers.get("Authorization")).toBe(`Bearer ${renewed}`);
   expect(state.save).toHaveBeenCalledTimes(1);
 });
+it("keeps the login identity while rotating the access token", async () => {
+  state.session = { ...state.session!, sessionId: "same-login" } as typeof state.session;
+  state.fetch.mockImplementation(async () => json({ accessToken: token(Math.floor(Date.now() / 1000) + 900), user: { id: "owner" } }));
+  const { renewSessionIfNeeded } = await import("./apiClient");
+  await renewSessionIfNeeded();
+  expect(state.save).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "same-login" }));
+});
 it("coalesces concurrent renewal calls", async () => {
   const renewed = token(Math.floor(Date.now() / 1000) + 900);
   state.fetch.mockResolvedValue(json({ accessToken: renewed, user: { id: "owner" } }));

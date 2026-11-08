@@ -7,6 +7,8 @@ import { INITIAL_SUGGESTIONS, planConversation, resultSummary } from "./chatConv
 import { searchChat } from "./chatSearch";
 import { clearChat, restoreChat, saveChat } from "./chatMemory";
 import type { ChatEntry, ConversationContext } from "./chatMemory";
+import { appActionLabel, distinctInstruction, guidanceForAction, planAppAssistance } from "./appAssistance";
+import type { AgentAppAction, AppGuideState, AssistantAppState } from "./appAssistance";
 import "./AgentChat.css";
 
 type AgentChatProps = {
@@ -20,6 +22,8 @@ type AgentChatProps = {
   openProfile: (ownerId: string | undefined, ownerName: string) => void;
   openPost: (id: Post["id"]) => void;
   onCatalogLoaded: (services: Service[], posts: Post[]) => void;
+  appState: AssistantAppState;
+  performAction: (action: AgentAppAction) => void;
 };
 
 function currentTime(): string {
@@ -55,6 +59,8 @@ export function AgentChat({
   openProfile,
   openPost,
   onCatalogLoaded,
+  appState,
+  performAction,
 }: AgentChatProps) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
@@ -63,6 +69,9 @@ export function AgentChat({
   const [messages, setMessages] = useState<ChatEntry[]>(() => [welcome()]);
   const messagesRef = useRef(messages);
   const contextRef = useRef<ConversationContext | null>(null);
+  const guidanceRef = useRef<AppGuideState | null>(null);
+  const appRef = useRef(appState);
+  appRef.current = appState;
   const nextId = useRef(2);
   const mounted = useRef(false);
   const ready = useRef(false);
@@ -98,6 +107,7 @@ export function AgentChat({
         }
         messagesRef.current = restored.slice(-60);
         contextRef.current = saved.context;
+        guidanceRef.current = saved.guidance ?? null;
         nextId.current = id;
         setMessages(messagesRef.current);
       }
@@ -124,11 +134,14 @@ export function AgentChat({
   }, [messages, sending]);
 
   function persist() {
-    if (ready.current) saveChat({ messages: messagesRef.current, context: contextRef.current });
+    if (ready.current) saveChat({ messages: messagesRef.current, context: contextRef.current, guidance: guidanceRef.current });
   }
 
   function append(entry: Omit<ChatEntry, "id" | "time">) {
     if (!mounted.current) return;
+    if (entry.sender === "agent" && !entry.servicios && !entry.publicaciones) entry = {
+      ...entry, text: distinctInstruction(entry.text, messagesRef.current.filter(item => item.sender === "agent").map(item => item.text)),
+    };
     messagesRef.current = [
       ...messagesRef.current,
       { ...entry, id: nextId.current++, time: currentTime() },
@@ -144,6 +157,7 @@ export function AgentChat({
     busy.current = false;
     clearChat();
     contextRef.current = null;
+    guidanceRef.current = null;
     messagesRef.current = [welcome()];
     nextId.current = 2;
     setMessages(messagesRef.current);
@@ -157,6 +171,12 @@ export function AgentChat({
     if (contextRef.current)
       contextRef.current = { ...contextRef.current, selectedId: id, pending: undefined };
     persist();
+  }
+
+  function performGuidedAction(action: AgentAppAction) {
+    guidanceRef.current = guidanceForAction(action, guidanceRef.current, appRef.current);
+    persist();
+    performAction(action);
   }
 
   function openResult(service: Service, profile = false) {
@@ -235,6 +255,14 @@ export function AgentChat({
     if (!consulta || busy.current || !ready.current) return;
     append({ sender: "user", text: consulta });
     setMessage("");
+    const continuingSearch = !guidanceRef.current && contextRef.current?.resultIds.length && /^(?:y ahora|y luego|que sigue|siguiente)[?¿!\s]*$/i.test(consulta);
+    const assistance = continuingSearch ? null : planAppAssistance(consulta, guidanceRef.current, appRef.current, catalogs.current.services, catalogs.current.posts);
+    if (assistance) {
+      guidanceRef.current = assistance.guidance;
+      append({ sender: "agent", text: assistance.text, appActions: assistance.actions, sugerencias: assistance.suggestions });
+      if (assistance.execute) performGuidedAction(assistance.execute);
+      return;
+    }
     const plan = planConversation(
       consulta,
       contextRef.current,
@@ -280,14 +308,16 @@ export function AgentChat({
           sender: "agent",
           text:
             plan.action === "profile"
-              ? `Aquí tienes el servicio de ${s.owner}. Pulsa «Ver perfil» para conocer al proveedor.`
-              : `Aquí tienes «${s.title}». Abre su detalle para consultar la información y la ubicación pública.`,
+              ? `Abro el perfil de ${s.owner}.`
+              : `Abro «${s.title}» para consultar su información y ubicación pública.`,
           servicios: [s],
         });
       }
+      if (plan.action !== "contact") openResult(s, plan.action === "profile");
       return;
     }
 
+    guidanceRef.current = null;
     contextRef.current = plan.context;
     persist();
     const local = (prefix: string) =>
@@ -468,9 +498,17 @@ export function AgentChat({
                   key={`nav-${destination}`}
                   type="button"
                   className="kuska-chat-action"
-                  onClick={() => navigate(destination)}
+                  onClick={() => {
+                    guidanceRef.current = { topic: "navigation", target: destination as import("./appAssistance").GuideScreen, opened: true, step: 0, eventRevision: appRef.current.lastSaved?.revision ?? 0 };
+                    persist(); navigate(destination);
+                  }}
                 >
                   Ir a {nombreSeccion(destination)}
+                </button>
+              ))}
+              {item.appActions?.map((action, index) => (
+                <button key={`app-${index}`} type="button" className="kuska-chat-action" onClick={() => performGuidedAction(action)}>
+                  {appActionLabel(action)}
                 </button>
               ))}
               {item.id === messages[messages.length - 1]?.id && item.sugerencias && (

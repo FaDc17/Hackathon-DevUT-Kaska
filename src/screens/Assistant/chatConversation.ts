@@ -94,6 +94,8 @@ export function planConversation(
     .replace(/\s+/g, " ")
     .trim();
   const query = cleanQuery(q);
+  if (context?.resultIds.length && /^(?:y ahora|y luego|que sigue|siguiente)$/.test(query))
+    return { kind: "reply", text: "Puedes elegir una de las opciones encontradas. Dime su número para abrir el servicio o pídeme el perfil de su proveedor.", sugerencias: ["Abre el primero", "Abre el perfil del primero"] };
   if (/^(?:reiniciar|borrar (?:el )?chat|nueva conversacion|empezar de nuevo)$/.test(q))
     return { kind: "reset" };
   if (

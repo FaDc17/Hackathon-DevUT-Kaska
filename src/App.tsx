@@ -17,6 +17,7 @@ import { Profile } from "./screens/Profile/Profile";
 import { NeighborProfile } from "./screens/Profile/NeighborProfile";
 import { Assistant } from "./screens/Assistant/Assistant";
 import { AgentChat } from "./screens/Assistant/AgentChat";
+import type { AgentAppAction, AssistantAppState } from "./screens/Assistant/appAssistance";
 import { Tutorial } from "./screens/Assistant/Tutorial";
 import { EmptyState } from "./screens/Home/EmptyState";
 import { CreateService } from "./screens/Services/CreateService";
@@ -106,6 +107,14 @@ export default function App() {
   const screenRef = useRef(screen);
   screenRef.current = screen;
   const [history, setHistory] = useState<Screen[]>([]);
+  const [assistantVisits, setAssistantVisits] = useState<Screen[]>([]);
+  const [assistantSaved, setAssistantSaved] = useState<AssistantAppState["lastSaved"]>();
+  const assistantRevision = useRef(0);
+  useEffect(() => { setAssistantVisits([]); setAssistantSaved(undefined); }, [sessionId]);
+  useEffect(() => {
+    if (!sessionId || ["login", "register", "recover", "assistant", "agentChat", "tutorial"].includes(screen)) return;
+    setAssistantVisits(current => current.at(-1) === screen ? current : [...current.slice(-11), screen]);
+  }, [screen, sessionId]);
   const [services, setServices] = useState<Service[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
   const pagesLoaded = useRef({ services: 1, posts: 1 });
@@ -280,6 +289,14 @@ export default function App() {
     setSelectedPost(id);
     go("postDetail");
   };
+  const performAgentAction = (action: AgentAppAction) => {
+    if (action.kind === "back") { back(); return; }
+    if (action.kind === "screen") { go(action.screen); return; }
+    if (action.kind === "createService") { setEditingService(undefined); go("services"); setModal("service"); }
+    else if (action.kind === "createPost") { setEditingPost(undefined); go("solidarity"); setModal("post"); }
+    else if (action.kind === "createEmergency") { go("emergency"); setModal("emergency"); }
+    else { go("profile"); setModal("edit"); }
+  };
   const openProfile = (ownerId: string | undefined, _name: string) => {
     if (!ownerId) {
       notify("Este contenido no tiene un proveedor identificado.");
@@ -390,6 +407,7 @@ export default function App() {
         ? (saveWebAccount(next), next)
         : await updateProfileOnlineOrQueue(next);
     setAccounts((items) => items.map((item) => (item.id === saved.id ? saved : item)));
+    setAssistantSaved({ kind: "profile", id: saved.id, revision: ++assistantRevision.current });
     setModal(null);
     notify(
       saved.syncStatus === "pendiente"
@@ -400,6 +418,7 @@ export default function App() {
   const publishService = async (service: Service) => {
     if (editingService) await updateService(service);
     else await createService(service, service.image);
+    setAssistantSaved({ kind: "service", id: service.id, revision: ++assistantRevision.current });
     setServices((items) => [
       { ...service, syncStatus: Capacitor.isNativePlatform() ? "pendiente" : "sincronizado" },
       ...items.filter((item) => item.id !== service.id),
@@ -413,6 +432,7 @@ export default function App() {
   const publishPost = async (post: Post) => {
     if (editingPost) await updatePost(post);
     else await createPost(post, post.image);
+    setAssistantSaved({ kind: "post", id: post.id, revision: ++assistantRevision.current });
     setPosts((items) => [
       { ...post, syncStatus: Capacitor.isNativePlatform() ? "pendiente" : "sincronizado" },
       ...items.filter((item) => item.id !== post.id),
@@ -629,6 +649,8 @@ export default function App() {
     if (screen === "agentChat")
       return (
         <AgentChat
+          appState={{ userId: user.id, remoteUserId: user.remoteId, visits: assistantVisits, serviceId: selectedService, postId: selectedPost, lastSaved: assistantSaved }}
+          performAction={performAgentAction}
           onCatalogLoaded={(foundServices, foundPosts) => {
             setServices(current => mergeFeed(current, foundServices));
             setPosts(current => mergeFeed(current, foundPosts));

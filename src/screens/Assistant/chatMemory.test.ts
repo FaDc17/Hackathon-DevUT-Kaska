@@ -60,6 +60,27 @@ afterEach(() => {
 });
 
 describe("memoria temporal del chatbot", () => {
+  it("preserves the conversation and guided step across renewal of the same authenticated session", async () => {
+    getSession.mockResolvedValue({ ...firstSession, sessionId: "login-a" });
+    await memory.restoreChat();
+    const saved: ChatSnapshot = { ...conversation(), guidance: { topic: "service", step: 2, eventRevision: 0 } };
+    memory.saveChat(saved);
+    getSession.mockResolvedValue({ ...firstSession, sessionId: "login-a", accessToken: "renewed" });
+    expect(await memory.restoreChat()).toEqual(saved);
+    getSession.mockResolvedValue({ ...firstSession, sessionId: "another-login", accessToken: "fresh-login" });
+    expect(await memory.restoreChat()).toBeNull();
+  });
+  it("copies guided actions and steps without sharing mutable references", async () => {
+    await memory.restoreChat();
+    const saved: ChatSnapshot = { ...conversation(), guidance: { topic: "navigation", target: "services", step: 1, eventRevision: 0 } };
+    saved.messages[1].appActions = [{ kind: "screen", screen: "services" }];
+    memory.saveChat(saved);
+    saved.guidance!.step = 4;
+    saved.messages[1].appActions[0] = { kind: "screen", screen: "profile" };
+    const restored = await memory.restoreChat();
+    expect(restored?.guidance?.step).toBe(1);
+    expect(restored?.messages[1].appActions).toEqual([{ kind: "screen", screen: "services" }]);
+  });
   it("restaura mensajes, filtros y selección al volver con la misma sesión", async () => {
     expect(await memory.restoreChat()).toBeNull();
     const saved = conversation();
