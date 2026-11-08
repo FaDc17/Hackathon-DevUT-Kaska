@@ -67,10 +67,10 @@ class BackendHttpSmokeTests {
 			HttpRequest invalidToken = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/actuator/health"))
 					.header("Authorization", "Bearer invalid-verification-token").GET().build();
 			assertEquals(200, client.send(invalidToken, HttpResponse.BodyHandlers.ofString()).statusCode());
-			for (String path : new String[] {"/actuator/env", "/actuator/beans", "/actuator/configprops", "/actuator/heapdump", "/actuator/health/db"}) {
+			for (String path : new String[] {"/actuator/env", "/actuator/beans", "/actuator/configprops", "/actuator/heapdump", "/actuator/health/db", "/api/imagenes/estado"}) {
 				assertEquals(401, send(client, path).statusCode(), path);
 			}
-			for (String[] mutation : new String[][] {{"PUT", "/api/servicios/verification-missing-id"}, {"DELETE", "/api/publicaciones/verification-missing-id"}, {"DELETE", "/api/usuarios/me"}, {"POST", "/actuator/health"}}) {
+			for (String[] mutation : new String[][] {{"POST", "/api/imagenes"}, {"PUT", "/api/servicios/verification-missing-id"}, {"DELETE", "/api/publicaciones/verification-missing-id"}, {"DELETE", "/api/usuarios/me"}, {"POST", "/actuator/health"}}) {
 				HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + mutation[1]))
 						.header("Content-Type", "application/json").method(mutation[0], HttpRequest.BodyPublishers.ofString("{}")).build();
 				assertEquals(401, client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode(), mutation[1]);

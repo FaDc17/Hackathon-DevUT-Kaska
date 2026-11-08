@@ -110,7 +110,12 @@ export async function pendingSyncOperations(limit = 100): Promise<PendingSyncOpe
   const result = await db.query(
     `SELECT q.IdOperacion, q.Entidad, q.EntidadId, q.Operacion, q.Payload, q.Intentos, q.OwnerId, q.ClientOperationId
      FROM ColaSincronizacion q
-     WHERE q.OwnerId=? AND COALESCE(q.ErrorUltimo,'') NOT IN ('DATA_CONFLICT','INVALID_OPERATION','FORBIDDEN','NOT_FOUND','IMAGE_UPLOAD_UNAVAILABLE') AND NOT EXISTS (
+     WHERE q.OwnerId=? AND COALESCE(q.ErrorUltimo,'') NOT IN ('DATA_CONFLICT','INVALID_OPERATION','FORBIDDEN','NOT_FOUND','IMAGE_UPLOAD_UNAVAILABLE')
+     AND (q.Entidad NOT IN ('ImagenesServicio','ImagenesPublicacion') OR NOT EXISTS(
+       SELECT 1 FROM ColaSincronizacion parent WHERE parent.OwnerId=q.OwnerId
+       AND parent.Entidad=CASE q.Entidad WHEN 'ImagenesServicio' THEN 'Servicios' ELSE 'Publicaciones' END
+       AND parent.EntidadId=CASE q.Entidad WHEN 'ImagenesServicio' THEN (SELECT IdServicio FROM ImagenesServicio WHERE IdImagen=q.EntidadId)
+       ELSE (SELECT IdPublicacion FROM ImagenesPublicacion WHERE IdImagen=q.EntidadId) END)) AND NOT EXISTS (
        SELECT 1 FROM ColaSincronizacion earlier WHERE earlier.OwnerId=q.OwnerId
        AND earlier.Entidad=q.Entidad AND earlier.EntidadId=q.EntidadId AND earlier.IdOperacion<q.IdOperacion)
      ORDER BY q.IdOperacion ASC

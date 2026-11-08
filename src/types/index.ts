@@ -52,6 +52,9 @@ export type Comment = {
 };
 
 export type Service = {
+  imageReference?: string;
+  imageDisplaySource?: string;
+  imageId?: string;
   id: EntityId;
   districtId?: number;
   categoryId?: number;
@@ -79,6 +82,9 @@ export type Service = {
 };
 
 export type Post = {
+  imageReference?: string;
+  imageDisplaySource?: string;
+  imageId?: string;
   id: EntityId;
   districtId?: number;
   typeId?: number;

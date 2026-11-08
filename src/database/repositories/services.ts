@@ -11,10 +11,16 @@ import {
 import { apiRequest } from "../../services/apiClient";
 import { getSecureSession } from "../../services/secureSession";
 import {
+  pendingImageStatements,
+  resolveImages,
+  tryUploadBrowserImage,
+} from "../../services/blobImages";
+import {
   isRemoteImage,
   browserImage,
   saveBrowserImage,
   removeBrowserImage,
+  recordImageReference,
 } from "../../services/images";
 import {
   commitPending,
@@ -81,6 +87,7 @@ function fromRemote(service: RemoteService): Service {
     lat: service.latitude ?? undefined,
     lng: service.longitude ?? undefined,
     image: service.images[0]?.url || "",
+    imageId: service.images[0]?.id,
     syncStatus: "sincronizado",
     reviews: service.reviews.map((review) => ({
       id: review.id,
@@ -99,10 +106,13 @@ export async function listServices(): Promise<Service[]> {
     (remote ?? []).map((value) => [value.id, fromRemote(value)]),
   );
   if (!Capacitor.isNativePlatform())
-    return [...services.values()].map((service) => {
-      const image = browserImage("service", service.id);
-      return image ? { ...service, image, imagePending: true } : service;
-    });
+    return resolveImages(
+      "service",
+      [...services.values()].map((service) => {
+        const image = browserImage("service", service.id);
+        return image ? { ...service, image, imagePending: true } : service;
+      }),
+    );
   const db = await getDatabase();
   const session = await getSecureSession();
   const rows = await db.query(
@@ -198,7 +208,10 @@ export async function listServices(): Promise<Service[]> {
       }
     }
   }
-  return [...services.values()].sort((a, b) => b.createdAt - a.createdAt);
+  return resolveImages(
+    "service",
+    [...services.values()].sort((a, b) => b.createdAt - a.createdAt),
+  );
 }
 
 async function servicePayload(service: Service) {
@@ -225,6 +238,7 @@ async function servicePayload(service: Service) {
 }
 
 async function saveService(service: Service, action: "crear" | "actualizar"): Promise<void> {
+  service = { ...service, image: recordImageReference(service) };
   const ownerId = await requireOwner(service.ownerId);
   const knownRemote = (await cachedList<RemoteService>("/api/servicios"))?.find(
     (row) => row.id === String(service.id),
@@ -238,6 +252,7 @@ async function saveService(service: Service, action: "crear" | "actualizar"): Pr
       { method: action === "crear" ? "POST" : "PUT", body: JSON.stringify(payload) },
     );
     await upsertRemoteCache("/api/servicios", saved);
+    void tryUploadBrowserImage("service", service.id);
     return;
   }
   const db = await getDatabase();
@@ -273,7 +288,7 @@ async function saveService(service: Service, action: "crear" | "actualizar"): Pr
   if (service.image)
     statements.push({
       statement: `INSERT INTO ImagenesServicio (IdImagen,IdServicio,RutaLocal,UrlRemota,Orden,SyncEstado)
-    VALUES (?,?,?,?,0,?) ON CONFLICT(IdImagen) DO UPDATE SET RutaLocal=excluded.RutaLocal,UrlRemota=excluded.UrlRemota,SyncEstado=excluded.SyncEstado;`,
+    VALUES (?,?,?,?,0,?) ON CONFLICT(IdImagen) DO UPDATE SET UrlRemota=CASE WHEN RutaLocal=excluded.RutaLocal THEN UrlRemota ELSE excluded.UrlRemota END,SyncEstado=CASE WHEN RutaLocal=excluded.RutaLocal THEN SyncEstado ELSE excluded.SyncEstado END,RutaLocal=excluded.RutaLocal;`,
       values: [
         `img-${service.id}`,
         payload.id,
@@ -282,7 +297,13 @@ async function saveService(service: Service, action: "crear" | "actualizar"): Pr
         isRemoteImage(service.image) ? "sincronizado" : "pendiente",
       ],
     });
-  await commitPending(statements, "Servicios", payload.id, action, payload);
+  await commitPending(
+    [...statements, ...(await pendingImageStatements("service", service.id, service.image))],
+    "Servicios",
+    payload.id,
+    action,
+    payload,
+  );
 }
 
 export async function createService(service: Service, image?: string): Promise<void> {

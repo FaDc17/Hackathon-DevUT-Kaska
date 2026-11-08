@@ -21,6 +21,8 @@ export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
   operationId?: string,
+  timeoutMs = 15_000,
+  responseType: "json" | "blob" = "json",
 ): Promise<T> {
   if (
     Capacitor.isNativePlatform() &&
@@ -34,7 +36,11 @@ export async function apiRequest<T>(
     );
   }
   const headers = new Headers(options.headers);
-  if (options.body && !headers.has("Content-Type")) {
+  if (
+    options.body &&
+    !(typeof FormData !== "undefined" && options.body instanceof FormData) &&
+    !headers.has("Content-Type")
+  ) {
     headers.set("Content-Type", "application/json");
   }
   const session = await getSecureSession();
@@ -48,7 +54,7 @@ export async function apiRequest<T>(
   const abort = () => controller.abort();
   options.signal?.addEventListener("abort", abort, { once: true });
   if (options.signal?.aborted) controller.abort();
-  const timeout = setTimeout(abort, 15_000);
+  const timeout = setTimeout(abort, timeoutMs);
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
@@ -82,5 +88,6 @@ export async function apiRequest<T>(
     );
   }
   if (response.status === 204) return undefined as T;
+  if (responseType === "blob") return (await response.blob()) as T;
   return (await response.json()) as T;
 }

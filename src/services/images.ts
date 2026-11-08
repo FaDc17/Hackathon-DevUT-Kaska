@@ -21,9 +21,39 @@ export function isRemoteImage(image: string | undefined): boolean {
   }
 }
 
+/** Temporary read permissions belong to presentation, never to SQL or the sync queue. */
+export function permanentImageReference(image: string): string {
+  try {
+    const url = new URL(image);
+    if (
+      url.hostname.endsWith(".blob.core.windows.net") &&
+      decodeURIComponent(url.pathname).split("/").filter(Boolean)[1] === "kuska"
+    ) {
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    }
+  } catch {
+    /* A local file is already a persistent reference. */
+  }
+  return image;
+}
+
+export function recordImageReference(record: {
+  image?: string;
+  imageReference?: string;
+  imageDisplaySource?: string;
+}): string {
+  if (record.imageReference && record.image === record.imageDisplaySource)
+    return record.imageReference;
+  return permanentImageReference(record.image || "");
+}
+
 export function saveBrowserImage(kind: "service" | "post", id: EntityId, image?: string): void {
   if (!image || isRemoteImage(image)) return;
   try {
+    if (localStorage.getItem(`kuska:local-image:${kind}:${id}`) !== image)
+      localStorage.removeItem(`kuska:image-uploaded:${kind}:${id}`);
     localStorage.setItem(`kuska:local-image:${kind}:${id}`, image);
   } catch {
     throw new Error(
@@ -38,6 +68,11 @@ export function browserImage(kind: "service" | "post", id: EntityId): string | n
 
 export function removeBrowserImage(kind: "service" | "post", id: EntityId): void {
   localStorage.removeItem(`kuska:local-image:${kind}:${id}`);
+  localStorage.removeItem(`kuska:image-uploaded:${kind}:${id}`);
+}
+
+export function browserImageIsPending(kind: "service" | "post", id: EntityId): boolean {
+  return !!browserImage(kind, id) && !localStorage.getItem(`kuska:image-uploaded:${kind}:${id}`);
 }
 
 /** Local files are never sent to SQL or marked uploaded without a remote image store. */
