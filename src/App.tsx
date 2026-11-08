@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import { AuthScreen } from "./screens/Login/AuthScreen";
 import { RegisterScreen } from "./screens/Register/RegisterScreen";
 import { RecoverScreen } from "./screens/RecoverPassword/RecoverScreen";
@@ -31,6 +32,7 @@ import { BottomNav, Icon } from "./components/common/CommonComponents";
 import type { Post, Screen, Service, User } from "./types";
 
 import { defaultPriceRange, initialPosts, initialServices, initialUsers, priceRanges } from "./data/demo";
+import { hashPassword } from "./utils/auth";
 import { seedDemoData } from "./database/seed";
 import {
   districtIdByName,
@@ -40,9 +42,53 @@ import {
 } from "./database/repositories/users";
 import { addReview, createService, listServices } from "./database/repositories/services";
 import { addComment, createPost, listPosts } from "./database/repositories/posts";
-import { register as registerOnline } from "./services/auth";
+import { apiRequest } from "./services/apiClient";
+import { register as registerOnline, toLocalUser, type AuthResponse } from "./services/auth";
+import { clearSecureSession, saveSecureSession } from "./services/secureSession";
 import { closeSession, establishSession, restoreSession, updateProfileOnlineOrQueue } from "./services/session";
 import { syncPendingProfileUpdates } from "./services/sync";
+
+type WebAccount = User & { passwordHash?: string };
+type RegistrationInput = {
+  username: string;
+  password: string;
+  address: string;
+  phone: string;
+  district: string;
+};
+
+function readWebAccounts(): WebAccount[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem("kuska-accounts") || "[]") as WebAccount[];
+    return Array.isArray(stored)
+      ? stored.filter((account) => account && typeof account.id === "string" && typeof account.name === "string")
+      : [];
+  } catch (error) {
+    console.warn("No se pudieron leer las cuentas locales del navegador.", error);
+    return [];
+  }
+}
+
+function loadWebAccounts(): WebAccount[] {
+  const stored = readWebAccounts();
+  return [
+    ...initialUsers.filter((seed) => !stored.some((account) => account.id === seed.id)),
+    ...stored,
+  ];
+}
+
+function saveWebAccount(account: WebAccount): void {
+  const stored = readWebAccounts();
+  const existingIndex = stored.findIndex((item) => item.id === account.id);
+  const safeAccount = {
+    ...account,
+    address: existingIndex < 0 ? "" : stored[existingIndex].address,
+    phone: existingIndex < 0 ? "" : stored[existingIndex].phone,
+  };
+  if (existingIndex < 0) stored.push(safeAccount);
+  else stored[existingIndex] = { ...stored[existingIndex], ...safeAccount };
+  localStorage.setItem("kuska-accounts", JSON.stringify(stored));
+}
 
 function normalizeServices(
   items: Array<Service & { price?: string }>,
@@ -118,14 +164,40 @@ function normalizePosts(items: Post[]): Post[] {
   }));
 }
 
+function loadWebServices(accounts: User[]): Service[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem("kuska-services") || "null");
+    return normalizeServices(Array.isArray(stored) ? stored : initialServices, accounts);
+  } catch (error) {
+    console.warn("No se pudieron leer los servicios locales del navegador.", error);
+    return normalizeServices(initialServices, accounts);
+  }
+}
+
+function loadWebPosts(): Post[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem("kuska-posts") || "null");
+    return normalizePosts(Array.isArray(stored) ? stored : initialPosts);
+  } catch (error) {
+    console.warn("No se pudieron leer las publicaciones locales del navegador.", error);
+    return normalizePosts(initialPosts);
+  }
+}
+
 export default function App() {
-  const [accounts, setAccounts] = useState<User[]>([]);
-  const [sessionId, setSessionId] = useState("");
+  const isNativePlatform = Capacitor.isNativePlatform();
+  const localWebAuthEnabled = !isNativePlatform && import.meta.env.DEV;
+  const [accounts, setAccounts] = useState<User[]>(() => isNativePlatform ? [] : loadWebAccounts());
+  const [sessionId, setSessionId] = useState(() => isNativePlatform ? "" : localStorage.getItem("kuska-session") || "");
   const user = accounts.find((account) => account.id === sessionId) || null;
-  const [screen, setScreen] = useState<Screen>("login");
+  const [screen, setScreen] = useState<Screen>(() =>
+    !isNativePlatform && localStorage.getItem("kuska-session") ? "home" : "login",
+  );
   const [history, setHistory] = useState<Screen[]>([]);
-  const [services, setServices] = useState<Service[]>([]);
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [services, setServices] = useState<Service[]>(() =>
+    isNativePlatform ? [] : loadWebServices(accounts),
+  );
+  const [posts, setPosts] = useState<Post[]>(() => isNativePlatform ? [] : loadWebPosts());
   const [selectedService, setSelectedService] = useState<number>(1);
   const [selectedPost, setSelectedPost] = useState<number>(1);
   const [selectedNeighborId, setSelectedNeighborId] = useState("");
@@ -140,6 +212,7 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
+    if (!isNativePlatform) return () => { active = false; };
     void (async () => {
       await seedDemoData();
       const [storedAccounts, storedServices, storedPosts, savedSession] = await Promise.all([
@@ -165,10 +238,11 @@ export default function App() {
       if (active) notify("No se pudo cargar la sesión local. Tus datos permanecen guardados.");
     });
     return () => { active = false; };
-  }, []);
+  }, [isNativePlatform]);
   useEffect(() => {
     const handleUnauthorized = () => {
-      void saveSession(null).finally(() => {
+      const clearLocalSession = isNativePlatform ? saveSession(null) : clearSecureSession();
+      void clearLocalSession.finally(() => {
         setSessionId("");
         setHistory([]);
         setScreen("login");
@@ -176,7 +250,7 @@ export default function App() {
       });
     };
     const retryPending = () => {
-      void syncPendingProfileUpdates();
+      if (isNativePlatform) void syncPendingProfileUpdates();
     };
     window.addEventListener("kuska:unauthorized", handleUnauthorized);
     window.addEventListener("online", retryPending);
@@ -184,7 +258,18 @@ export default function App() {
       window.removeEventListener("kuska:unauthorized", handleUnauthorized);
       window.removeEventListener("online", retryPending);
     };
-  }, []);
+  }, [isNativePlatform]);
+  useEffect(() => {
+    if (isNativePlatform) return;
+    localStorage.setItem("kuska-services", JSON.stringify(services));
+  }, [isNativePlatform, services]);
+  useEffect(() => {
+    if (isNativePlatform) return;
+    localStorage.setItem("kuska-posts", JSON.stringify(posts));
+  }, [isNativePlatform, posts]);
+  useEffect(() => {
+    if (!isNativePlatform && sessionId && user) localStorage.setItem("kuska-session", sessionId);
+  }, [isNativePlatform, sessionId, user]);
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(""), 2800);
@@ -229,7 +314,19 @@ export default function App() {
   const selectedServiceData = services.find((s) => s.id === selectedService) || services[0];
   const selectedPostData = posts.find((p) => p.id === selectedPost) || posts[0];
   const notify = (message: string) => setToast(message);
-  const acceptAuthenticatedUser = async (response: Awaited<ReturnType<typeof registerOnline>>) => {
+  const acceptAuthenticatedUser = async (response: AuthResponse) => {
+    if (!isNativePlatform) {
+      await saveSecureSession({ accessToken: response.accessToken, userId: response.user.id });
+      const authenticatedUser = toLocalUser(response.user);
+      setAccounts((current) => [
+        ...current.filter((account) => account.id !== authenticatedUser.id),
+        authenticatedUser,
+      ]);
+      setSessionId(authenticatedUser.id);
+      setHistory([]);
+      setScreen("home");
+      return;
+    }
     const authenticatedUser = await establishSession(response);
     setAccounts(await listUsers());
     setSessionId(authenticatedUser.id);
@@ -237,14 +334,50 @@ export default function App() {
     setScreen("home");
     void syncPendingProfileUpdates();
   };
-  const registerUser = async (input: {
-    username: string;
-    password: string;
-    address: string;
-    phone: string;
-    district: string;
-  }) => {
-    const districtId = await districtIdByName(input.district);
+  const loginLocallyForDevelopment = async (username: string, password: string) => {
+    const account = readWebAccounts().find(
+      (candidate) => candidate.name.toLowerCase() === username.trim().toLowerCase(),
+    );
+    if (!account?.passwordHash || account.passwordHash !== await hashPassword(password)) {
+      throw new Error("Usuario o contraseña incorrectos.");
+    }
+    setAccounts((current) => [
+      ...current.filter((item) => item.id !== account.id),
+      account,
+    ]);
+    setSessionId(account.id);
+    setHistory([]);
+    setScreen("home");
+  };
+  const registerUser = async (input: RegistrationInput) => {
+    if (localWebAuthEnabled) {
+      const knownAccount = readWebAccounts().some(
+        (account) => account.name.toLowerCase() === input.username.toLowerCase(),
+      );
+      if (knownAccount) throw new Error("Ese nombre de usuario ya está registrado en este navegador.");
+      const account: WebAccount = {
+        id: `web-${crypto.randomUUID()}`,
+        name: input.username,
+        phone: input.phone,
+        address: input.address,
+        district: input.district,
+        avatar: input.username.charAt(0).toUpperCase(),
+        about: "",
+        passwordHash: await hashPassword(input.password),
+      };
+      saveWebAccount(account);
+      setAccounts((current) => [...current.filter((item) => item.id !== account.id), account]);
+      setSessionId(account.id);
+      setHistory([]);
+      setScreen("home");
+      return;
+    }
+    const districtId = isNativePlatform
+      ? await districtIdByName(input.district)
+      : initialUsers.find((account) => account.district === input.district)?.districtId;
+    if (districtId === undefined) {
+      throw new Error("No se pudo identificar el distrito para completar el registro.");
+    }
     const response = await registerOnline({
       username: input.username,
       password: input.password,
@@ -265,9 +398,11 @@ export default function App() {
     if (screen === "login")
       return (
         <AuthScreen
+          accounts={accounts}
           go={go}
           notify={notify}
           onLogin={acceptAuthenticatedUser}
+          localDevLogin={localWebAuthEnabled ? loginLocallyForDevelopment : undefined}
         />
       );
     if (screen === "register")
@@ -282,9 +417,11 @@ export default function App() {
     if (!user)
       return (
         <AuthScreen
+          accounts={accounts}
           go={go}
           notify={notify}
           onLogin={acceptAuthenticatedUser}
+          localDevLogin={localWebAuthEnabled ? loginLocallyForDevelopment : undefined}
         />
       );
     if (screen === "home")
@@ -350,9 +487,17 @@ export default function App() {
           user={user}
           back={back}
           onComment={(comment) => {
-          void addComment(selectedPost, comment).then(async () => {
-            setPosts(await listPosts());
-          }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
+            if (isNativePlatform) {
+              void addComment(selectedPost, comment).then(async () => {
+                setPosts(await listPosts());
+              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
+            } else {
+              setPosts((current) => current.map((post) =>
+                post.id === selectedPost
+                  ? { ...post, comments: [...(post.comments || []), comment] }
+                  : post,
+              ));
+            }
             notify("Comentario publicado");
           }}
           openProfile={openProfile}
@@ -381,7 +526,9 @@ export default function App() {
           openAbout={() => setModal("about")}
           edit={() => setModal("edit")}
           logout={() => {
-            void closeSession().finally(() => {
+            const closing = isNativePlatform ? closeSession() : clearSecureSession();
+            void closing.finally(() => {
+              if (!isNativePlatform) localStorage.removeItem("kuska-session");
               setSessionId("");
               setHistory([]);
               setScreen("login");
@@ -447,9 +594,13 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(service) => {
-              void createService(service, service.image).then(async () => {
-                setServices(await listServices());
-              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
+              if (isNativePlatform) {
+                void createService(service, service.image).then(async () => {
+                  setServices(await listServices());
+                }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
+              } else {
+                setServices((current) => [service, ...current]);
+              }
               setModal(null);
               notify("Tu servicio ya está visible");
               setCategory("Todos");
@@ -461,9 +612,13 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(post) => {
-              void createPost(post, post.image).then(async () => {
-                setPosts(await listPosts());
-              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
+              if (isNativePlatform) {
+                void createPost(post, post.image).then(async () => {
+                  setPosts(await listPosts());
+                }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
+              } else {
+                setPosts((current) => [post, ...current]);
+              }
               setModal(null);
               notify("Publicación compartida con tu comunidad");
             }}
@@ -474,9 +629,13 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(post) => {
-              void createPost(post, post.image).then(async () => {
-                setPosts(await listPosts());
-              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
+              if (isNativePlatform) {
+                void createPost(post, post.image).then(async () => {
+                  setPosts(await listPosts());
+                }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
+              } else {
+                setPosts((current) => [post, ...current]);
+              }
               setModal(null);
               notify("Alerta vecinal publicada");
             }}
@@ -487,9 +646,17 @@ export default function App() {
             user={user}
             onClose={() => setModal(null)}
             onPublish={(review) => {
-              void addReview(selectedService, review).then(async () => {
-                setServices(await listServices());
-              }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
+              if (isNativePlatform) {
+                void addReview(selectedService, review).then(async () => {
+                  setServices(await listServices());
+                }).catch((error) => notify(error instanceof Error ? error.message : String(error)));
+              } else {
+                setServices((current) => current.map((service) =>
+                  service.id === selectedService
+                    ? { ...service, reviews: [...service.reviews, review] }
+                    : service,
+                ));
+              }
               setModal(null);
               notify("Gracias por compartir tu experiencia");
             }}
@@ -504,14 +671,18 @@ export default function App() {
               setAccounts((current) =>
                 current.map((account) => (account.id === user.id ? next : account)),
               );
-              void updateProfileOnlineOrQueue(next).then(async (saved) => {
-                setAccounts(await listUsers());
-                notify(saved.syncStatus === "pendiente"
-                  ? "Perfil guardado localmente; sincronización pendiente"
-                  : "Perfil actualizado y sincronizado");
-              }).catch((error: unknown) => {
-                notify(error instanceof Error ? error.message : "No se pudo actualizar el perfil.");
-              });
+              if (isNativePlatform) {
+                void updateProfileOnlineOrQueue(next).then(async (saved) => {
+                  setAccounts(await listUsers());
+                  notify(saved.syncStatus === "pendiente"
+                    ? "Perfil guardado localmente; sincronización pendiente"
+                    : "Perfil actualizado y sincronizado");
+                }).catch((error: unknown) => {
+                  notify(error instanceof Error ? error.message : "No se pudo actualizar el perfil.");
+                });
+              } else {
+                saveWebAccount(next);
+              }
               setServices((current) =>
                 current.map((service) => ({
                   ...service,
@@ -546,14 +717,18 @@ export default function App() {
                   account.id === user.id ? { ...account, about } : account,
                 ),
               );
-              void updateProfileOnlineOrQueue({ ...user, about }).then(async (saved) => {
-                setAccounts(await listUsers());
-                notify(saved.syncStatus === "pendiente"
-                  ? "Perfil guardado localmente; sincronización pendiente"
-                  : "Información personal actualizada");
-              }).catch((error: unknown) => {
-                notify(error instanceof Error ? error.message : "No se pudo actualizar el perfil.");
-              });
+              if (isNativePlatform) {
+                void updateProfileOnlineOrQueue({ ...user, about }).then(async (saved) => {
+                  setAccounts(await listUsers());
+                  notify(saved.syncStatus === "pendiente"
+                    ? "Perfil guardado localmente; sincronización pendiente"
+                    : "Información personal actualizada");
+                }).catch((error: unknown) => {
+                  notify(error instanceof Error ? error.message : "No se pudo actualizar el perfil.");
+                });
+              } else {
+                saveWebAccount({ ...user, about });
+              }
               setModal(null);
             }}
           />

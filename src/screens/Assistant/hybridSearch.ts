@@ -13,7 +13,6 @@ const CATEGORIAS: Array<[string, RegExp]> = [
   ["mascotas", /mascota|perro|gato|paseador|veterinari/],
   ["transporte", /transporte|taxi|mudanza|movilidad/],
   ["hogar", /limpieza|tejido|ropa|arreglos|hogar|casa/],
-  ["polleria", /poller|pollo a la brasa|pollo broaster/],
 ];
 const STOP = new Set([
   "quiero", "busco", "buscar", "necesito", "alguien", "algo", "cerca", "precio", "cuesta", "cueste",
@@ -76,6 +75,7 @@ function palabras(consulta: string): string[] {
 
 export function buscarServiciosLocales(consulta: string, services: Service[], distritoUsuario: string): Service[] {
   const q = normalizar(consulta);
+  if (/poller|restaurante?|pollo a la brasa|pollo broaster/.test(q)) return [];
   // Si la persona busca donaciones, priorizamos Comunidad y no confundimos una oferta de arreglos con una donación.
   if (/donar|donando|dono|regal/.test(q) && !/servicio|trabajo|arreglo/.test(q)) return [];
   const categoria = CATEGORIAS.find(([, re]) => re.test(q))?.[0] ?? null;
@@ -84,8 +84,7 @@ export function buscarServiciosLocales(consulta: string, services: Service[], di
   const tokens = palabras(consulta);
   return services.filter((s) => {
     const contenido = normalizar(`${s.title} ${s.description} ${s.category}`);
-    if (categoria && !(normalizar(s.category) === categoria || contenido.includes(categoria) ||
-       (categoria === "polleria" && /poller|pollo a la brasa/.test(contenido)))) return false;
+    if (categoria && !(normalizar(s.category) === categoria || contenido.includes(categoria))) return false;
     if (distrito && normalizar(s.district) !== normalizar(distrito)) return false;
     // El máximo del rango debe cumplir todo el presupuesto. Desconocido != 0.
     if (presupuesto.max !== null &&

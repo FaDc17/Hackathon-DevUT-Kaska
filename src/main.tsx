@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { Capacitor } from '@capacitor/core';
 import App from './App';
 import './index.css';
 import { initializeDatabase } from './database/init';
@@ -10,9 +11,13 @@ async function startApp() {
   const root = ReactDOM.createRoot(document.getElementById('root')!);
 
   try {
-    console.log('[KUSKA SQLITE] Ejecutando initializeDatabase antes de renderizar App.');
-    await initializeDatabase();
-    console.log('[KUSKA SQLITE] initializeDatabase completado; renderizando App.');
+    if (Capacitor.isNativePlatform()) {
+      console.log('[KUSKA SQLITE] Ejecutando initializeDatabase antes de renderizar App.');
+      await initializeDatabase();
+      console.log('[KUSKA SQLITE] initializeDatabase completado; renderizando App.');
+    } else {
+      console.log('[KUSKA SQLITE] Plataforma web; se usará el almacenamiento local del navegador.');
+    }
 
     root.render(
       <React.StrictMode>

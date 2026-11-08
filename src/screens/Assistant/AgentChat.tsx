@@ -11,6 +11,8 @@ type OfertaNube = {
   id: number;
   nombre: string;
   descripcion?: string;
+  categoria?: string;
+  rubro?: string;
   distrito?: string;
   precio_soles?: number | null;
   precio_min?: number | null;
@@ -46,6 +48,23 @@ function precioOferta(item: OfertaNube): string {
   if (item.tipo_precio === "exacto" && typeof item.precio_soles === "number") return `S/ ${item.precio_soles.toFixed(2)}`;
   if (typeof item.precio_min === "number" && typeof item.precio_max === "number") return `S/ ${item.precio_min}–${item.precio_max}`;
   return "Precio por consultar";
+}
+
+function esRestaurante(item: OfertaNube): boolean {
+  return /poller[ií]a|restaurante?|pollo(?:\s+(?:a la brasa|broaster))|comida preparada|men[uú]\s+(?:del d[ií]a|ejecutivo)/i.test(
+    `${item.nombre} ${item.descripcion ?? ""} ${item.categoria ?? ""} ${item.rubro ?? ""}`,
+  );
+}
+
+function mensajeSinEjemplosRestaurante(mensaje?: string): string {
+  if (!mensaje || /poller[ií]a|restaurante?/i.test(mensaje)) {
+    return "¿Qué servicio u oficio estás buscando? Cuéntame qué necesitas.";
+  }
+  return mensaje;
+}
+
+function esSolicitudDeContacto(consulta: string): boolean {
+  return /\b(n[uú]mero|tel[eé]fono|celular|contacto|llamar|whatsapp)\b/i.test(consulta);
 }
 
 // Los botones nuevos aparecen solo dentro del chat, reutilizando su estética pastel.
@@ -131,6 +150,42 @@ export function AgentChat({ back, district, services, posts, navigate, openServi
     });
   }
 
+  function responderContacto(consulta: string): boolean {
+    if (!esSolicitudDeContacto(consulta)) return false;
+
+    const resultadoAnterior = [...messages]
+      .reverse()
+      .find((item) => item.sender === "agent" && (item.servicios?.length || item.ofertas?.length));
+    if (!resultadoAnterior) {
+      answer({ text: "¿De qué servicio o proveedor necesitas el número?" });
+      return true;
+    }
+
+    if (resultadoAnterior.servicios?.length) {
+      const conContacto = resultadoAnterior.servicios.filter(
+        (servicio) => servicio.contactPhone.trim().length > 0,
+      );
+      if (conContacto.length) {
+        answer({
+          text: conContacto.length === 1
+            ? `El contacto publicado para ${conContacto[0].title} es ${conContacto[0].contactPhone}.`
+            : `Estos son los contactos publicados: ${conContacto.map((servicio) => `${servicio.owner}: ${servicio.contactPhone}`).join("; ")}.`,
+          servicios: conContacto,
+          modo: resultadoAnterior.modo,
+        });
+      } else {
+        answer({ text: "El servicio encontrado no tiene un teléfono de contacto publicado." });
+      }
+      return true;
+    }
+
+    answer({
+      text: "Ese resultado es de demostración y no tiene un teléfono de contacto verificado. No puedo proporcionar un número para ese registro.",
+      modo: resultadoAnterior.modo,
+    });
+    return true;
+  }
+
   const sendMessage = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const consulta = message.trim().slice(0, 300);
@@ -143,6 +198,7 @@ export function AgentChat({ back, district, services, posts, navigate, openServi
       navigate(destination);
       return;
     }
+    if (responderContacto(consulta)) return;
     if (responderPreguntaGeneral(consulta)) {
       return;
     }
@@ -201,10 +257,15 @@ export function AgentChat({ back, district, services, posts, navigate, openServi
 
       const locales = buscarServiciosLocales(consulta, services, district);
       const comunitarias = buscarPublicacionesLocales(consulta, posts, district);
+      const ofertas = info.resultados.filter((oferta) => !esRestaurante(oferta));
+      const soloRestaurantes = info.resultados.length > 0 && ofertas.length === 0;
+      const resultadosLocales = locales.length + comunitarias.length;
       answer({
-        modo: "nube", ofertas: info.resultados, servicios: locales, publicaciones: comunitarias,
-        text: `${info.mensaje ?? "Búsqueda completada."}${!info.usoIA ? " Usé los filtros de respaldo del servidor." : ""}${(locales.length + comunitarias.length) ? " También tengo resultados guardados en esta aplicación." : ""}`,
-        acciones: info.resultados.length || locales.length || comunitarias.length ? undefined : ["services", "solidarity"],
+        modo: "nube", ofertas, servicios: locales, publicaciones: comunitarias,
+        text: soloRestaurantes
+          ? `No encontré un servicio de Kuska que coincida con esa búsqueda.${resultadosLocales ? " También tengo resultados guardados en esta aplicación." : ""}`
+          : `${mensajeSinEjemplosRestaurante(info.mensaje)}${!info.usoIA ? " Usé los filtros de respaldo del servidor." : ""}${resultadosLocales ? " También tengo resultados guardados en esta aplicación." : ""}`,
+        acciones: ofertas.length || resultadosLocales ? undefined : ["services", "solidarity"],
       });
     } catch (error) {
       const messageError = error instanceof Error ? error.message : String(error);
@@ -258,9 +319,9 @@ export function AgentChat({ back, district, services, posts, navigate, openServi
               </span>
             )}
             <div>
-              <p>{item.text}</p>
+              <p>{item.sender === "agent" ? mensajeSinEjemplosRestaurante(item.text) : item.text}</p>
               {item.modo && <small>{item.modo === "local" ? "Consulta local (sin IA)" : "Consulta a Cloudflare · datos de demostración"}</small>}
-              {item.ofertas?.map((oferta) => (
+              {item.ofertas?.filter((oferta) => !esRestaurante(oferta)).map((oferta) => (
                 <div key={`nube-${oferta.id}`} style={{ marginTop: 8, padding: 9, borderRadius: 10, background: "white", fontSize: 12 }}>
                   <strong>{oferta.nombre}</strong>
                   <div>{oferta.distrito || "Distrito no indicado"} · {precioOferta(oferta)}</div>
@@ -275,6 +336,7 @@ export function AgentChat({ back, district, services, posts, navigate, openServi
                   <strong>{servicio.title}</strong>
                   <div>{servicio.district} · {servicio.priceLabel}</div>
                   <div>Ofrecido por: {servicio.owner}</div>
+                  {servicio.contactPhone.trim() && <div>Contacto publicado: {servicio.contactPhone}</div>}
                   <button type="button" style={estiloAccion} onClick={() => openService(servicio.id)}>
                     Ver servicio y su ubicación
                   </button>
