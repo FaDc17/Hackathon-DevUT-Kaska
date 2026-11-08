@@ -32,9 +32,17 @@ import type { Post, Screen, Service, User } from "./types";
 
 import { defaultPriceRange, initialPosts, initialServices, initialUsers, priceRanges } from "./data/demo";
 import { seedDemoData } from "./database/seed";
-import { createUser, getSavedSession, listUsers, saveSession, updateUser } from "./database/repositories/users";
+import {
+  districtIdByName,
+  getSavedSession,
+  listUsers,
+  saveSession,
+} from "./database/repositories/users";
 import { addReview, createService, listServices } from "./database/repositories/services";
 import { addComment, createPost, listPosts } from "./database/repositories/posts";
+import { register as registerOnline } from "./services/auth";
+import { closeSession, establishSession, restoreSession, updateProfileOnlineOrQueue } from "./services/session";
+import { syncPendingProfileUpdates } from "./services/sync";
 
 function normalizeServices(
   items: Array<Service & { price?: string }>,
@@ -145,11 +153,37 @@ export default function App() {
       setServices(storedServices);
       setPosts(storedPosts);
       if (savedSession) {
-        setSessionId(savedSession);
+        const restoredUser = await restoreSession();
+        if (!active || !restoredUser) return;
+        setAccounts(await listUsers());
+        setSessionId(restoredUser.id);
         setScreen("home");
+        void syncPendingProfileUpdates();
       }
-    })();
+    })().catch((error: unknown) => {
+      console.error("No se pudo restaurar Kuska:", error);
+      if (active) notify("No se pudo cargar la sesión local. Tus datos permanecen guardados.");
+    });
     return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      void saveSession(null).finally(() => {
+        setSessionId("");
+        setHistory([]);
+        setScreen("login");
+        notify("Tu sesión venció. Inicia sesión nuevamente.");
+      });
+    };
+    const retryPending = () => {
+      void syncPendingProfileUpdates();
+    };
+    window.addEventListener("kuska:unauthorized", handleUnauthorized);
+    window.addEventListener("online", retryPending);
+    return () => {
+      window.removeEventListener("kuska:unauthorized", handleUnauthorized);
+      window.removeEventListener("online", retryPending);
+    };
   }, []);
   useEffect(() => {
     if (!toast) return;
@@ -195,6 +229,31 @@ export default function App() {
   const selectedServiceData = services.find((s) => s.id === selectedService) || services[0];
   const selectedPostData = posts.find((p) => p.id === selectedPost) || posts[0];
   const notify = (message: string) => setToast(message);
+  const acceptAuthenticatedUser = async (response: Awaited<ReturnType<typeof registerOnline>>) => {
+    const authenticatedUser = await establishSession(response);
+    setAccounts(await listUsers());
+    setSessionId(authenticatedUser.id);
+    setHistory([]);
+    setScreen("home");
+    void syncPendingProfileUpdates();
+  };
+  const registerUser = async (input: {
+    username: string;
+    password: string;
+    address: string;
+    phone: string;
+    district: string;
+  }) => {
+    const districtId = await districtIdByName(input.district);
+    const response = await registerOnline({
+      username: input.username,
+      password: input.password,
+      address: input.address,
+      phone: input.phone,
+      districtId,
+    });
+    await acceptAuthenticatedUser(response);
+  };
   const showNav =
     !!user &&
     !["login", "register", "recover", "home", "assistant", "agentChat", "tutorial"].includes(
@@ -206,50 +265,26 @@ export default function App() {
     if (screen === "login")
       return (
         <AuthScreen
-          accounts={accounts}
           go={go}
           notify={notify}
-          onLogin={(id) => {
-            void saveSession(id).then(() => {
-              setSessionId(id);
-              setHistory([]);
-              setScreen("home");
-            });
-          }}
+          onLogin={acceptAuthenticatedUser}
         />
       );
     if (screen === "register")
       return (
         <RegisterScreen
-          accounts={accounts}
           go={go}
           notify={notify}
-          onRegister={(account) => {
-            void (async () => {
-              await createUser(account);
-              await saveSession(account.id);
-              setAccounts(await listUsers());
-              setSessionId(account.id);
-              setHistory([]);
-              setScreen("home");
-            })().catch((error) => notify(error instanceof Error ? error.message : String(error)));
-          }}
+          onRegister={registerUser}
         />
       );
     if (screen === "recover") return <RecoverScreen go={go} notify={notify} />;
     if (!user)
       return (
         <AuthScreen
-          accounts={accounts}
           go={go}
           notify={notify}
-          onLogin={(id) => {
-            void saveSession(id).then(() => {
-              setSessionId(id);
-              setHistory([]);
-              setScreen("home");
-            });
-          }}
+          onLogin={acceptAuthenticatedUser}
         />
       );
     if (screen === "home")
@@ -346,7 +381,7 @@ export default function App() {
           openAbout={() => setModal("about")}
           edit={() => setModal("edit")}
           logout={() => {
-            void saveSession(null).finally(() => {
+            void closeSession().finally(() => {
               setSessionId("");
               setHistory([]);
               setScreen("login");
@@ -469,7 +504,14 @@ export default function App() {
               setAccounts((current) =>
                 current.map((account) => (account.id === user.id ? next : account)),
               );
-              void updateUser(next).then(() => listUsers()).then(setAccounts);
+              void updateProfileOnlineOrQueue(next).then(async (saved) => {
+                setAccounts(await listUsers());
+                notify(saved.syncStatus === "pendiente"
+                  ? "Perfil guardado localmente; sincronización pendiente"
+                  : "Perfil actualizado y sincronizado");
+              }).catch((error: unknown) => {
+                notify(error instanceof Error ? error.message : "No se pudo actualizar el perfil.");
+              });
               setServices((current) =>
                 current.map((service) => ({
                   ...service,
@@ -491,7 +533,6 @@ export default function App() {
               );
               if (previousName !== next.name) notify("Perfil y autoría actualizados");
               setModal(null);
-              notify("Perfil actualizado");
             }}
           />
         )}
@@ -505,9 +546,15 @@ export default function App() {
                   account.id === user.id ? { ...account, about } : account,
                 ),
               );
-              void updateUser({ ...user, about }).then(() => listUsers()).then(setAccounts);
+              void updateProfileOnlineOrQueue({ ...user, about }).then(async (saved) => {
+                setAccounts(await listUsers());
+                notify(saved.syncStatus === "pendiente"
+                  ? "Perfil guardado localmente; sincronización pendiente"
+                  : "Información personal actualizada");
+              }).catch((error: unknown) => {
+                notify(error instanceof Error ? error.message : "No se pudo actualizar el perfil.");
+              });
               setModal(null);
-              notify("Información personal actualizada");
             }}
           />
         )}

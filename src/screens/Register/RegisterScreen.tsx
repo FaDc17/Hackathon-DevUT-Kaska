@@ -1,17 +1,22 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
-import { hashPassword } from "../../utils/auth";
 import { Icon, Logo } from "../../components/common/CommonComponents";
-import type { Screen, User } from "../../types";
+import type { Screen } from "../../types";
+
+type RegistrationForm = {
+  username: string;
+  password: string;
+  address: string;
+  phone: string;
+  district: string;
+};
 
 export function RegisterScreen({
-  accounts,
   onRegister,
   go,
   notify,
 }: {
-  accounts: User[];
-  onRegister: (u: User) => void;
+  onRegister: (user: RegistrationForm) => Promise<void>;
   go: (s: Screen) => void;
   notify: (s: string) => void;
 }) {
@@ -24,6 +29,7 @@ export function RegisterScreen({
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
   const validateField = (field: keyof typeof values, value: string) => {
     const clean = value.trim();
     if (field === "name") {
@@ -32,8 +38,6 @@ export function RegisterScreen({
         return "El usuario debe tener entre 3 y 20 caracteres";
       if (!/^[A-Za-zÁÉÍÓÚáéíóúÑñ0-9_]+$/.test(clean))
         return "Usa solamente letras, números y guion bajo";
-      const used = accounts.map((account) => account.name.toLowerCase());
-      if (used.includes(clean.toLowerCase())) return "Este nombre de usuario ya está registrado";
     }
     if (field === "password") {
       if (!clean) return "Ingresa una contraseña";
@@ -66,19 +70,24 @@ export function RegisterScreen({
     );
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
-    const cleanName = values.name.trim();
-    const account: User = {
-      id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      name: cleanName,
-      phone: values.phone,
-      address: values.address.trim(),
-      district: values.district,
-      avatar: cleanName.charAt(0).toUpperCase(),
-      about: "",
-      passwordHash: await hashPassword(values.password),
-    };
-    onRegister(account);
-    notify("Cuenta creada. ¡Bienvenida a Kuska!");
+    setLoading(true);
+    try {
+      await onRegister({
+        username: values.name.trim(),
+        password: values.password,
+        address: values.address.trim(),
+        phone: values.phone,
+        district: values.district,
+      });
+      notify("Cuenta creada. ¡Bienvenida a Kuska!");
+    } catch (reason) {
+      setErrors((current) => ({
+        ...current,
+        form: reason instanceof Error ? reason.message : "No fue posible crear la cuenta.",
+      }));
+    } finally {
+      setLoading(false);
+    }
   };
   return (
     <section className="simple-auth">
@@ -92,6 +101,7 @@ export function RegisterScreen({
       <h1>Únete a tu comunidad</h1>
       <p>Completa tus datos para empezar a conectar con tus vecinos.</p>
       <form className="stack-form" onSubmit={submit}>
+        {errors.form && <p className="form-error">{errors.form}</p>}
         <label>
           Nombre de usuario *
           <input
@@ -168,7 +178,9 @@ export function RegisterScreen({
           </select>
           {errors.district && <span className="field-error">{errors.district}</span>}
         </label>
-        <button className="primary-button">Crear mi cuenta</button>
+        <button className="primary-button" disabled={loading}>
+          {loading ? "Creando cuenta…" : "Crear mi cuenta"}
+        </button>
       </form>
     </section>
   );

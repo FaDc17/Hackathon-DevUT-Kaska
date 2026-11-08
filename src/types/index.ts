@@ -20,13 +20,15 @@ export type Screen =
 
 export type User = {
   id: string;
+  remoteId?: string;
   name: string;
   phone: string;
   address: string;
   district: string;
+  districtId?: number;
   avatar: string;
   about: string;
-  passwordHash?: string;
+  syncStatus?: "pendiente" | "sincronizado" | "error";
 };
 
 export type Review = {

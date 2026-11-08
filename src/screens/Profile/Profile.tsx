@@ -54,6 +54,16 @@ export function Profile({
         </div>
         <small>Estos datos solo son visibles para ti.</small>
       </div>
+      {user.syncStatus === "pendiente" && (
+        <p className="form-error" role="status">
+          Perfil guardado en este dispositivo; sincronización pendiente.
+        </p>
+      )}
+      {user.syncStatus === "error" && (
+        <p className="form-error" role="status">
+          No se pudo sincronizar el perfil; los cambios permanecen guardados en este dispositivo.
+        </p>
+      )}
       <div className="about-card">
         <div className="row between">
           <div>

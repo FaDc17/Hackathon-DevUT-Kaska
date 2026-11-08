@@ -3,7 +3,7 @@ import type { SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { describeError, getDatabase } from './connection';
 import sqlSchema from '../../kuska_sqlite.sql?raw';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const EXPECTED_TABLES = [
   'Usuarios',
@@ -134,6 +134,9 @@ async function initialize(): Promise<void> {
     );
   }
   if (currentVersion !== SCHEMA_VERSION) {
+    if (currentVersion < 2) {
+      await db.run("UPDATE Usuarios SET ContrasenaHash = '' WHERE ContrasenaHash <> '';");
+    }
     await db.run(`PRAGMA user_version = ${SCHEMA_VERSION};`);
   }
 
