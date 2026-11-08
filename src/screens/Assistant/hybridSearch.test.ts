@@ -4,6 +4,8 @@ import {
   buscarPublicacionesLocales,
   buscarServiciosLocales,
   buscarServiciosInterpretados,
+  categoriaDeConsulta,
+  distritoDeConsulta,
   extraerPresupuesto,
   seccionSolicitada,
 } from "./hybridSearch";
@@ -109,6 +111,105 @@ const posts: Post[] = [
 ];
 
 describe("búsqueda local del agente", () => {
+  it("no convierte saludos, confirmaciones o mensajes sin búsqueda en un catálogo completo", () => {
+    for (const consulta of [
+      "",
+      "hola",
+      "gracias",
+      "sí",
+      "no",
+      "ok",
+      "hasta 50 soles",
+      "uno más barato",
+    ]) {
+      expect(buscarServiciosLocales(consulta, services, "Breña"), consulta).toEqual([]);
+    }
+  });
+
+  it("respeta el oficio afirmado y descarta el rechazado", () => {
+    const plumber = { ...services[1], id: "plumber", title: "Gasfitero", category: "Gasfiteria" };
+    const consulta = "No quiero gasfitero, necesito electricista";
+    expect(categoriaDeConsulta(consulta)).toBe("electricidad");
+    expect(categoriaDeConsulta("No necesito electricista")).toBeNull();
+    expect(buscarServiciosLocales(consulta, [plumber, services[1]], "Breña")).toEqual([
+      services[1],
+    ]);
+    expect(buscarServiciosLocales("No quiero gasfitero", [plumber], "Breña")).toEqual([]);
+  });
+
+  it("reconoce reparación de teléfonos con artículos sin clasificar contactos como tecnología", () => {
+    for (const query of [
+      "reparar mi celular",
+      "reparar un teléfono",
+      "arreglar el celular",
+      "reparación de mi teléfono",
+    ]) {
+      expect(categoriaDeConsulta(query), query).toBe("tecnologia");
+    }
+    expect(categoriaDeConsulta("dame el teléfono del proveedor")).toBeNull();
+  });
+
+  it("no interpreta casa ni una especialidad como un distrito", () => {
+    for (const lugar of [
+      "en casa",
+      "en mi casa",
+      "en el domicilio",
+      "con experiencia en instalaciones",
+    ]) {
+      const consulta = `Necesito electricista ${lugar}`;
+      expect(distritoDeConsulta(consulta, "Breña", []), consulta).toBe("Breña");
+      expect(buscarServiciosLocales(consulta, services, "Breña"), consulta).toHaveLength(4);
+    }
+  });
+
+  it("no confunde nombres de distrito que solo comparten un prefijo", () => {
+    const candidate = { ...services[1], district: "Callao" };
+    expect(distritoDeConsulta("electricista en Callaolandia", "Breña", ["Callao"])).toBe(
+      "callaolandia",
+    );
+    expect(buscarServiciosLocales("electricista en Callaolandia", [candidate], "Breña")).toEqual(
+      [],
+    );
+    expect(distritoDeConsulta("electricista en el distrito de Breña", "Callao", [])).toBe("Breña");
+  });
+
+  it("admite intervalos explícitos sin presentar rangos fuera de sus límites como válidos", () => {
+    expect(extraerPresupuesto("entre S/ 30 y S/ 50")).toEqual({
+      min: 30,
+      max: 50,
+      estricto: false,
+    });
+    expect(extraerPresupuesto("de 30,50 a 50,50 soles")).toEqual({
+      min: 30.5,
+      max: 50.5,
+      estricto: false,
+    });
+    const cheap = { ...services[1], id: "cheap", priceMin: 10, priceMax: 20 };
+    const unknown = { ...services[1], id: "unknown-min", priceMin: null };
+    expect(
+      buscarServiciosLocales(
+        "electricista entre 30 y 50 soles",
+        [...services, cheap, unknown],
+        "Breña",
+      ).map((s) => s.id),
+    ).toEqual([3, 4]);
+  });
+
+  it("mantiene los resultados y referencias dentro del chat y conserva órdenes explícitas de navegación", () => {
+    for (const consulta of [
+      "Muéstrame electricistas",
+      "Muéstrame el segundo",
+      "Abre el contacto del gasfitero",
+      "Quiero ver carpinteros",
+    ]) {
+      expect(seccionSolicitada(consulta), consulta).toBeNull();
+    }
+    expect(seccionSolicitada("Abre Servicios")).toBe("services");
+    expect(seccionSolicitada("Muéstrame el mapa")).toBe("map");
+    expect(seccionSolicitada("Ir a mi perfil")).toBe("profile");
+    expect(seccionSolicitada("Quiero reportar una emergencia")).toBe("emergency");
+  });
+
   it("filtra servicios por categoría y distrito conservando sus identificadores y proveedores", () => {
     const results = buscarServiciosLocales(
       "Busco un electricista en Breña",

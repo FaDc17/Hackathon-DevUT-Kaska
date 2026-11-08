@@ -1,51 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties, FormEvent } from "react";
+import type { FormEvent } from "react";
 import { Icon } from "../../components/common/CommonComponents";
-import type { ChatMessage, Post, Screen, Service } from "../../types";
-import {
-  buscarPublicacionesLocales,
-  buscarServiciosLocales,
-  nombreSeccion,
-  seccionSolicitada,
-} from "./hybridSearch";
-import {
-  normalizar,
-  extraerPresupuesto,
-  buscarServiciosInterpretados,
-  type CloudIntent,
-} from "./hybridSearch";
-import { listServices } from "../../database/repositories/services";
-import { listPosts } from "../../database/repositories/posts";
-
-const API = "https://kuska-agente-api.kuska-app.workers.dev/buscar";
-const TIEMPO_MAXIMO_MS = 12000;
-
-type OfertaNube = {
-  id: number;
-  nombre: string;
-  descripcion?: string;
-  categoria?: string;
-  rubro?: string;
-  distrito?: string;
-  precio_soles?: number | null;
-  precio_min?: number | null;
-  precio_max?: number | null;
-  tipo_precio?: string;
-  es_demo?: number | boolean;
-};
-type RespuestaNube = {
-  mensaje?: string;
-  resultados?: OfertaNube[];
-  usoIA?: boolean;
-  filtros?: CloudIntent;
-};
-type Entrada = ChatMessage & {
-  servicios?: Service[];
-  publicaciones?: Post[];
-  ofertas?: OfertaNube[];
-  modo?: "nube" | "local";
-  acciones?: Screen[];
-};
+import type { Post, Screen, Service } from "../../types";
+import { buscarPublicacionesLocales, buscarServiciosLocales, nombreSeccion } from "./hybridSearch";
+import { INITIAL_SUGGESTIONS, planConversation, resultSummary } from "./chatConversation";
+import { searchChat } from "./chatSearch";
+import { clearChat, restoreChat, saveChat } from "./chatMemory";
+import type { ChatEntry, ConversationContext } from "./chatMemory";
+import "./AgentChat.css";
 
 type AgentChatProps = {
   back: () => void;
@@ -59,33 +21,26 @@ type AgentChatProps = {
   openPost: (id: Post["id"]) => void;
 };
 
-function precioOferta(item: OfertaNube): string {
-  if (item.tipo_precio === "exacto" && typeof item.precio_soles === "number")
-    return `S/ ${item.precio_soles.toFixed(2)}`;
-  if (typeof item.precio_min === "number" && typeof item.precio_max === "number")
-    return `S/ ${item.precio_min}–${item.precio_max}`;
-  return "Precio por consultar";
+function currentTime(): string {
+  return new Intl.DateTimeFormat("es-PE", { hour: "2-digit", minute: "2-digit" }).format(
+    new Date(),
+  );
 }
 
-function esSolicitudDeContacto(consulta: string): boolean {
-  return /\b(n[uú]mero|tel[eé]fono|celular|contacto|llamar|whatsapp)\b/i.test(consulta);
+function welcome(): ChatEntry {
+  return {
+    id: 1,
+    sender: "agent",
+    time: currentTime(),
+    text: "¡Hola! Soy el Agente Kuska. Te ayudo a encontrar servicios y apoyo en tu comunidad. Puedes decirme qué necesitas, dónde y cuánto quieres gastar.",
+    sugerencias: INITIAL_SUGGESTIONS,
+  };
 }
 
-// Los botones nuevos aparecen solo dentro del chat, reutilizando su estética pastel.
-const estiloAccion: CSSProperties = {
-  display: "block",
-  width: "100%",
-  minHeight: 44,
-  marginTop: 7,
-  padding: "9px 10px",
-  border: "1px solid #c6e6df",
-  borderRadius: 12,
-  background: "#D9F3EE",
-  color: "#0F172A",
-  textAlign: "left",
-  fontSize: 13,
-  fontWeight: 600,
-  cursor: "pointer",
+const MODE_LABELS = {
+  ia: "Consulta interpretada con IA · datos de Kuska",
+  remoto: "Búsqueda en línea · respaldo sin IA",
+  local: "Búsqueda en este dispositivo · sin IA",
 };
 
 export function AgentChat({
@@ -101,316 +56,318 @@ export function AgentChat({
 }: AgentChatProps) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [restoring, setRestoring] = useState(true);
   const [connected, setConnected] = useState(() => navigator.onLine);
-  const [messages, setMessages] = useState<Entrada[]>([
-    {
-      id: 1,
-      sender: "agent",
-      text: "Hola, soy el Agente Kuska. ¿Cómo puedo ayudarte hoy?",
-      time: "Ahora",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatEntry[]>(() => [welcome()]);
+  const messagesRef = useRef(messages);
+  const contextRef = useRef<ConversationContext | null>(null);
   const nextId = useRef(2);
+  const mounted = useRef(false);
+  const ready = useRef(false);
+  const busy = useRef(false);
   const activeRequest = useRef<AbortController | null>(null);
+  const requestVersion = useRef(0);
   const historyRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const catalogs = useRef({ services, posts });
 
   useEffect(() => {
+    catalogs.current = { services, posts };
+  }, [services, posts]);
+
+  useEffect(() => {
+    let active = true;
+    mounted.current = true;
+    busy.current = false;
+    setSending(false);
+    setRestoring(true);
+    void restoreChat().then((saved) => {
+      if (!active) return;
+      if (saved?.messages.length) {
+        const restored = [...saved.messages];
+        let id = Math.max(...restored.map((item) => item.id)) + 1;
+        if (restored[restored.length - 1]?.sender === "user") {
+          restored.push({
+            id: id++,
+            sender: "agent",
+            time: currentTime(),
+            text: "La consulta anterior se interrumpió al salir. Puedes enviarla de nuevo o continuar con otra búsqueda.",
+          });
+        }
+        messagesRef.current = restored.slice(-60);
+        contextRef.current = saved.context;
+        nextId.current = id;
+        setMessages(messagesRef.current);
+      }
+      ready.current = true;
+      setRestoring(false);
+    });
     const update = () => setConnected(navigator.onLine);
     window.addEventListener("online", update);
     window.addEventListener("offline", update);
     return () => {
+      active = false;
+      mounted.current = false;
+      ready.current = false;
+      requestVersion.current++;
+      activeRequest.current?.abort();
       window.removeEventListener("online", update);
       window.removeEventListener("offline", update);
-      activeRequest.current?.abort();
     };
   }, []);
 
   useEffect(() => {
     const node = historyRef.current;
-    if (!node) return;
-    node.scrollTop = node.scrollHeight;
+    if (node) node.scrollTop = node.scrollHeight;
   }, [messages, sending]);
 
-  function answer(entry: Omit<Entrada, "id" | "sender" | "time">) {
-    setMessages((previous) => [
-      ...previous,
-      { id: nextId.current++, sender: "agent", time: "Ahora", ...entry },
-    ]);
+  function persist() {
+    if (ready.current) saveChat({ messages: messagesRef.current, context: contextRef.current });
   }
 
-  function registrarDiagnostico(
-    contexto: string,
-    error: unknown,
-    extra: Record<string, unknown> = {},
-  ) {
-    const detalle =
-      error instanceof Error
-        ? { name: error.name, message: error.message }
-        : { value: String(error) };
-    console.warn("[KUSKA_AGENT]", { contexto, ...detalle, ...extra });
+  function append(entry: Omit<ChatEntry, "id" | "time">) {
+    if (!mounted.current) return;
+    messagesRef.current = [
+      ...messagesRef.current,
+      { ...entry, id: nextId.current++, time: currentTime() },
+    ].slice(-60);
+    setMessages(messagesRef.current);
+    persist();
   }
 
-  function responderPreguntaGeneral(consulta: string): boolean {
-    const q = normalizar(consulta);
-    if (
-      /publicar un servicio|publicar servicio|ofrecer un servicio|quiero publicar|como publico/.test(
-        q,
-      )
-    ) {
-      answer({
-        text: "Puedes publicar tu servicio desde la sección Servicios. Allí encontrarás la opción para compartirlo con tu comunidad.",
+  function resetConversation() {
+    requestVersion.current++;
+    activeRequest.current?.abort();
+    activeRequest.current = null;
+    busy.current = false;
+    clearChat();
+    contextRef.current = null;
+    messagesRef.current = [welcome()];
+    nextId.current = 2;
+    setMessages(messagesRef.current);
+    setMessage("");
+    setSending(false);
+    persist();
+    inputRef.current?.focus();
+  }
+
+  function rememberSelection(id: Service["id"]) {
+    if (contextRef.current)
+      contextRef.current = { ...contextRef.current, selectedId: id, pending: undefined };
+    persist();
+  }
+
+  function openResult(service: Service, profile = false) {
+    const current = catalogs.current.services.find(
+      (item) => String(item.id) === String(service.id) && !item.isDemo,
+    );
+    if (!current) {
+      append({
+        sender: "agent",
+        text: "Este servicio ya no aparece en los datos disponibles. Puedes realizar una nueva búsqueda o revisar Servicios.",
         acciones: ["services"],
       });
-      return true;
+      return;
     }
-    if (/perfil (?:del |de un )?proveedor|perfil del dueno/.test(q)) {
-      const previous = [...messages].reverse().find((item) => item.servicios?.length);
-      if (previous?.servicios?.length)
-        answer({
-          text: "Abre el perfil del proveedor correspondiente en estos resultados.",
-          servicios: previous.servicios,
-          modo: previous.modo,
-        });
+    rememberSelection(current.id);
+    if (profile) {
+      if (current.ownerId) openProfile(current.ownerId, current.owner);
       else
-        answer({
-          text: "Primero busca el servicio que necesitas. En cada resultado podrás abrir el perfil de su proveedor.",
-          acciones: ["services"],
+        append({
+          sender: "agent",
+          text: "Este servicio no tiene un perfil de proveedor disponible.",
         });
-      return true;
-    }
-    if (
-      /^(?:como (?:consulto|edito)|quiero (?:ver|editar)|ver|abrir)?\s*mi perfil|^mi cuenta$/.test(
-        q,
-      )
-    ) {
-      answer({
-        text: "Puedes revisar tu perfil desde la pantalla de perfil. Allí verás tus datos y publicaciones.",
-        acciones: ["profile"],
+    } else if (services.some((item) => String(item.id) === String(current.id))) {
+      openService(current.id);
+    } else {
+      append({
+        sender: "agent",
+        text: "No puedo abrir ese servicio en este momento. Puedes buscarlo en la sección Servicios.",
+        acciones: ["services"],
       });
-      return true;
     }
-    if (/^(?:como (?:puedo )?publicar|como comparto|ayuda con una publicacion)/.test(q)) {
-      answer({
-        text: "Puedes compartir una necesidad o apoyo desde la sección Comunidad. Ahí se publican solicitudes y ayudas vecinales.",
+  }
+
+  function openPostResult(post: Post) {
+    const current = catalogs.current.posts.find(
+      (item) => String(item.id) === String(post.id) && !item.isDemo,
+    );
+    if (current && posts.some((item) => String(item.id) === String(current.id)))
+      openPost(current.id);
+    else
+      append({
+        sender: "agent",
+        text: "No puedo abrir esa publicación en este momento. Puedes revisar las publicaciones disponibles en Comunidad.",
         acciones: ["solidarity"],
       });
-      return true;
-    }
-    if (/^(?:como (?:abro|veo)|quiero ver|ver)?\s*(?:el )?(?:mapa|ubicacion)$/.test(q)) {
-      answer({
-        text: "Puedes explorar ubicaciones y servicios desde el mapa comunitario. También puedes abrirlo desde la sección Mapa.",
-        acciones: ["map"],
-      });
-      return true;
-    }
-    if (
-      /^(?:ayuda|que puedo hacer|que puedes hacer|opciones|como usar kuska|tutorial)[?!.]*$/.test(q)
-    ) {
-      answer({
-        text: "Puedo ayudarte a buscar servicios o publicaciones y también abrir las pantallas principales de Kuska.",
-        acciones: ["services", "solidarity", "emergency", "map", "profile"],
-      });
-      return true;
-    }
-    return false;
   }
 
-  function respuestaLocal(consulta: string, motivo: string) {
-    const servicios = buscarServiciosLocales(consulta, services, district, districtId);
-    const publicaciones = buscarPublicacionesLocales(consulta, posts, district, districtId);
-    const cantidad = servicios.length + publicaciones.length;
-    answer({
-      modo: "local",
-      servicios,
-      publicaciones,
-      text: cantidad
-        ? `${motivo} Encontré ${cantidad} coincidencia(s) guardadas en este dispositivo. Pueden estar desactualizadas.`
-        : `${motivo} No encontré coincidencias guardadas en este dispositivo. Puedes abrir Servicios o Comunidad para explorar.`,
-      acciones: cantidad ? undefined : ["services", "solidarity"],
+  function showResults(
+    query: string,
+    context: ConversationContext,
+    foundServices: Service[],
+    foundPosts: Post[],
+    mode: NonNullable<ChatEntry["modo"]>,
+    prefix = "",
+  ) {
+    contextRef.current = {
+      ...context,
+      query,
+      resultIds: foundServices.map((s) => s.id),
+      postIds: foundPosts.map((p) => p.id),
+    };
+    const count = foundServices.length + foundPosts.length;
+    append({
+      sender: "agent",
+      modo: mode,
+      servicios: foundServices,
+      publicaciones: foundPosts,
+      text: `${prefix}${resultSummary(foundServices, foundPosts, mode === "local")}`,
+      acciones: count ? undefined : ["services", "solidarity"],
+      sugerencias: count ? undefined : ["¿Qué puedes hacer?"],
     });
   }
 
-  function responderContacto(consulta: string): boolean {
-    if (!esSolicitudDeContacto(consulta)) return false;
-
-    const resultadoAnterior = [...messages]
-      .reverse()
-      .find((item) => item.sender === "agent" && (item.servicios?.length || item.ofertas?.length));
-    if (!resultadoAnterior) {
-      answer({ text: "¿De qué servicio o proveedor necesitas el número?" });
-      return true;
+  async function send(typed: string) {
+    const consulta = typed.trim().slice(0, 300);
+    if (!consulta || busy.current || !ready.current) return;
+    append({ sender: "user", text: consulta });
+    setMessage("");
+    const plan = planConversation(
+      consulta,
+      contextRef.current,
+      catalogs.current.services,
+      catalogs.current.posts,
+      district,
+    );
+    if (plan.kind === "reset") {
+      resetConversation();
+      return;
     }
-
-    if (resultadoAnterior.servicios?.length) {
-      const conContacto = resultadoAnterior.servicios.filter(
-        (servicio) => servicio.contactPhone.trim().length > 0,
-      );
-      if (conContacto.length) {
-        answer({
-          text:
-            conContacto.length === 1
-              ? `El contacto publicado para ${conContacto[0].title} es ${conContacto[0].contactPhone}.`
-              : `Estos son los contactos publicados: ${conContacto.map((servicio) => `${servicio.owner}: ${servicio.contactPhone}`).join("; ")}.`,
-          servicios: conContacto,
-          modo: resultadoAnterior.modo,
+    if (plan.kind === "navigate") {
+      append({
+        sender: "agent",
+        text: `Vamos a ${nombreSeccion(plan.destination)}. Tu conversación seguirá aquí cuando vuelvas.`,
+      });
+      navigate(plan.destination);
+      return;
+    }
+    if (plan.kind === "reply") {
+      if (plan.context) contextRef.current = plan.context;
+      append({
+        sender: "agent",
+        text: plan.text,
+        acciones: plan.acciones,
+        sugerencias: plan.sugerencias,
+      });
+      return;
+    }
+    if (plan.kind === "selection") {
+      contextRef.current = plan.context;
+      const s = plan.service;
+      if (plan.action === "contact") {
+        append({
+          sender: "agent",
+          text: s.contactPhone.trim()
+            ? `El contacto publicado de ${s.owner} para «${s.title}» es ${s.contactPhone}. Puedes coordinar directamente con el proveedor.`
+            : `«${s.title}» no tiene un teléfono publicado. Puedes revisar el servicio o su perfil.`,
+          servicios: [s],
         });
       } else {
-        answer({ text: "El servicio encontrado no tiene un teléfono de contacto publicado." });
+        append({
+          sender: "agent",
+          text:
+            plan.action === "profile"
+              ? `Aquí tienes el servicio de ${s.owner}. Pulsa «Ver perfil» para conocer al proveedor.`
+              : `Aquí tienes «${s.title}». Abre su detalle para consultar la información y la ubicación pública.`,
+          servicios: [s],
+        });
       }
-      return true;
-    }
-
-    answer({
-      text: "Ese resultado es de demostración y no tiene un teléfono de contacto verificado. No puedo proporcionar un número para ese registro.",
-      modo: resultadoAnterior.modo,
-    });
-    return true;
-  }
-
-  const sendMessage = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const consulta = message.trim().slice(0, 300);
-    if (!consulta || sending) return;
-    setMessages((previous) => [
-      ...previous,
-      { id: nextId.current++, sender: "user", text: consulta, time: "Ahora" },
-    ]);
-    setMessage("");
-
-    const destination = seccionSolicitada(consulta);
-    if (destination) {
-      navigate(destination);
       return;
     }
-    if (responderContacto(consulta)) return;
-    if (responderPreguntaGeneral(consulta)) {
+
+    contextRef.current = plan.context;
+    persist();
+    const local = (prefix: string) =>
+      showResults(
+        plan.query,
+        plan.context,
+        buscarServiciosLocales(plan.query, catalogs.current.services, district, districtId),
+        buscarPublicacionesLocales(plan.query, catalogs.current.posts, district, districtId),
+        "local",
+        prefix,
+      );
+    if (!navigator.onLine || plan.preferLocal || !district.trim()) {
+      local(
+        !navigator.onLine
+          ? "Estás sin conexión. "
+          : plan.preferLocal
+            ? "Ajusté tu búsqueda con el contexto de la conversación. "
+            : "Usaré los datos disponibles en este dispositivo. ",
+      );
       return;
     }
+
+    busy.current = true;
     setSending(true);
-    if (!navigator.onLine) {
-      respuestaLocal(consulta, "Estás sin internet.");
-      setSending(false);
-      return;
-    }
-    const mensaje = typeof consulta === "string" ? consulta.trim() : String(consulta ?? "");
-    const distritoUsuario = typeof district === "string" ? district.trim() : String(district ?? "");
-    if (!mensaje || !distritoUsuario) {
-      respuestaLocal(consulta, "No pude preparar la consulta para buscar en internet.");
-      setSending(false);
-      return;
-    }
-
     const controller = new AbortController();
     activeRequest.current = controller;
+    const version = ++requestVersion.current;
+    let timedOut = false;
     const timeout = window.setTimeout(() => {
-      registrarDiagnostico("timeout", new Error("Tiempo de espera agotado"), { url: API });
+      timedOut = true;
       controller.abort();
-    }, TIEMPO_MAXIMO_MS);
+    }, 12000);
+    const current = () =>
+      mounted.current && version === requestVersion.current && !controller.signal.aborted;
     try {
-      const payload = JSON.stringify({ mensaje, distritoUsuario });
-      const res = await fetch(API, {
-        method: "POST",
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-        body: payload,
-        signal: controller.signal,
-      });
-
-      if (!res.ok) {
-        const detalle = await res.text().catch(() => "");
-        registrarDiagnostico("error_http", new Error(`HTTP ${res.status}`), {
-          status: res.status,
-          contentType: res.headers.get("content-type"),
-          detalle: detalle.slice(0, 180),
-          url: API,
-        });
-        throw new Error(`HTTP ${res.status}`);
-      }
-
-      let info: RespuestaNube;
-      try {
-        info = (await res.json()) as RespuestaNube;
-      } catch (parseError) {
-        registrarDiagnostico("json_invalido", parseError, {
-          contentType: res.headers.get("content-type"),
-          url: API,
-        });
-        throw new Error("JSON inválido");
-      }
-
-      if (!info || typeof info !== "object" || !Array.isArray(info.resultados)) {
-        registrarDiagnostico("respuesta_invalida", new Error("Respuesta sin array de resultados"), {
-          info,
-        });
-        throw new Error("Respuesta inválida");
-      }
-
-      // La búsqueda de Cloudflare no acredita que D1 y Azure SQL compartan registros.
-      // Releer los repositorios de Kuska y conservar exclusivamente sus IDs para navegar.
-      const [freshServices, freshPosts] = await Promise.all([listServices(), listPosts()]);
-      const locales = buscarServiciosInterpretados(
-        consulta,
-        freshServices,
+      const result = await searchChat(
+        plan.query,
         district,
-        info.filtros,
         districtId,
+        catalogs.current,
+        controller.signal,
       );
-      const comunitarias = buscarPublicacionesLocales(consulta, freshPosts, district, districtId);
-      const presupuesto = extraerPresupuesto(consulta);
-      const limiteDemo = presupuesto.max ?? info.filtros?.maxPrecio;
-      const estrictoDemo =
-        presupuesto.max === null ? info.filtros?.estricto === true : presupuesto.estricto;
-      const ofertas = info.resultados.filter((oferta) => {
-        if (!oferta.es_demo) return false;
-        if (typeof limiteDemo !== "number" || !Number.isFinite(limiteDemo)) return true;
-        // No convertir un precio exacto externo en un rango de Kuska.
-        return (
-          typeof oferta.precio_max === "number" &&
-          Number.isFinite(oferta.precio_max) &&
-          (estrictoDemo ? oferta.precio_max < limiteDemo : oferta.precio_max <= limiteDemo)
+      if (!current()) return;
+      catalogs.current = { services: result.allServices, posts: result.allPosts };
+      if (result.conversation) {
+        append({ sender: "agent", text: result.conversation, modo: result.mode });
+      } else {
+        showResults(
+          result.query,
+          { ...plan.context, district: result.district },
+          result.services,
+          result.posts,
+          result.mode,
+          result.prefix,
         );
-      });
-      const resultadosLocales = locales.length + comunitarias.length;
-      answer({
-        modo: "nube",
-        ofertas,
-        servicios: locales,
-        publicaciones: comunitarias,
-        text: `${info.usoIA ? "Consulté el agente de Cloudflare y busqué en Kuska." : "Cloudflare respondió con sus filtros de respaldo y busqué en Kuska."} ${resultadosLocales ? `Encontré ${resultadosLocales} coincidencia(s) en los datos disponibles de Kuska.` : "No encontré coincidencias en los datos disponibles de Kuska."}${ofertas.length ? " Los ejemplos DEMO aparecen por separado y no son negocios verificados." : ""}`,
-        acciones: ofertas.length || resultadosLocales ? undefined : ["services", "solidarity"],
-      });
+      }
     } catch (error) {
-      const messageError = error instanceof Error ? error.message : String(error);
-      const isTimeout =
-        (error instanceof DOMException && error.name === "AbortError") ||
-        /timeout|tiempo de espera/i.test(messageError);
-      const isCors = /Failed to fetch|NetworkError|cors|cross-origin|crossorigin/i.test(
-        messageError,
+      if (!mounted.current || version !== requestVersion.current) return;
+      console.warn("[KUSKA_AGENT]", error instanceof Error ? error.name : "Error de consulta");
+      local(
+        timedOut
+          ? "La consulta en línea tardó demasiado. "
+          : "No pude completar la consulta en línea. ",
       );
-      const isJson = /JSON inválido|respuesta inválida|invalid json/i.test(messageError);
-      const isHttp = /^HTTP \d{3}$/.test(messageError);
-
-      if (isTimeout) registrarDiagnostico("timeout", error, { url: API });
-      else if (isCors) registrarDiagnostico("posible_cors_o_red", error, { url: API });
-      else if (isHttp) registrarDiagnostico("error_http", error, { url: API });
-      else if (isJson) registrarDiagnostico("json_invalido", error, { url: API });
-      else registrarDiagnostico("fallo_ejecucion", error, { url: API });
-
-      const fallback = isTimeout
-        ? "No pude consultar los resultados en internet. Buscaré entre los servicios guardados en tu dispositivo."
-        : isJson
-          ? "La respuesta del servidor no fue válida. Buscaré entre los servicios guardados en tu dispositivo."
-          : "No pude consultar los resultados en internet. Buscaré entre los servicios guardados en tu dispositivo.";
-
-      respuestaLocal(consulta, fallback);
     } finally {
       window.clearTimeout(timeout);
       if (activeRequest.current === controller) activeRequest.current = null;
-      setSending(false);
+      if (mounted.current && version === requestVersion.current) {
+        busy.current = false;
+        setSending(false);
+        inputRef.current?.focus();
+      }
     }
-  };
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void send(message);
+  }
 
   return (
-    <section className="agent-chat-page">
+    <section className="agent-chat-page" aria-label="Conversación con el Agente Kuska">
       <div className="agent-chat-header">
         <button className="icon-button" onClick={back} aria-label="Volver">
           <Icon name="back" />
@@ -421,17 +378,35 @@ export function AgentChat({
         <div>
           <span className="eyebrow">KUSKA</span>
           <h1>Agente Kuska</h1>
+          <span className="kuska-chat-status">
+            {connected
+              ? "Con conexión · respaldo local disponible"
+              : "Sin conexión · búsqueda local disponible"}
+          </span>
         </div>
         <span
-          className="online-dot"
-          aria-label={connected ? "Con internet" : "Sin internet"}
-          style={
-            connected ? undefined : { backgroundColor: "#94A3B8", boxShadow: "0 0 0 4px #e2e8f0" }
-          }
+          className={`online-dot${connected ? "" : " kuska-chat-offline"}`}
+          aria-label={connected ? "Dispositivo con conexión" : "Dispositivo sin conexión"}
         />
       </div>
-      <div className="chat-history" ref={historyRef} aria-live="polite">
-        <div className="chat-day">Hoy</div>
+      <div
+        className="chat-history"
+        ref={historyRef}
+        role="log"
+        aria-label="Mensajes"
+        aria-live="polite"
+        aria-relevant="additions"
+        aria-busy={sending || restoring}
+      >
+        <div className="kuska-chat-toolbar">
+          <span>Esta conversación</span>
+          <button type="button" onClick={resetConversation} disabled={restoring}>
+            Nueva conversación
+          </button>
+        </div>
+        <div className="kuska-chat-memory-note">
+          Contexto temporal de esta sesión. Puedes reiniciarlo cuando quieras.
+        </div>
         {messages.map((item) => (
           <article className={`chat-message ${item.sender}`} key={item.id}>
             {item.sender === "agent" && (
@@ -441,112 +416,100 @@ export function AgentChat({
             )}
             <div>
               <p>{item.text}</p>
-              {item.modo && (
-                <small>
-                  {item.modo === "local"
-                    ? "Consulta local (sin IA)"
-                    : "Cloudflare consultado · resultados del repositorio Kuska"}
-                </small>
-              )}
-              {item.ofertas?.map((oferta) => (
-                <div
-                  key={`nube-${oferta.id}`}
-                  style={{
-                    marginTop: 8,
-                    padding: 9,
-                    borderRadius: 10,
-                    background: "white",
-                    fontSize: 12,
-                  }}
-                >
-                  <strong>DEMO · {oferta.nombre}</strong>
+              {item.modo && <small className="kuska-chat-mode">{MODE_LABELS[item.modo]}</small>}
+              {item.servicios?.map((service, index) => (
+                <div key={`service-${service.id}`} className="kuska-chat-result">
+                  <span className="kuska-chat-result-number">
+                    {!item.modo && item.servicios?.length === 1
+                      ? "Proveedor seleccionado"
+                      : `Opción ${index + 1}`}
+                  </span>
+                  <strong>{service.title}</strong>
                   <div>
-                    {oferta.distrito || "Distrito no indicado"} · {precioOferta(oferta)}
+                    {service.district} · {service.priceLabel}
                   </div>
-                  {oferta.descripcion && <div>{oferta.descripcion}</div>}
-                  <small>
-                    Registro ficticio de Cloudflare: no incluye proveedor ni ubicación verificada.
-                  </small>
-                </div>
-              ))}
-              {item.servicios?.map((servicio) => (
-                <div
-                  key={`serv-${servicio.id}`}
-                  style={{
-                    marginTop: 8,
-                    padding: 9,
-                    borderRadius: 10,
-                    background: "white",
-                    fontSize: 12,
-                  }}
-                >
-                  <strong>{servicio.title}</strong>
-                  <div>
-                    {servicio.district} · {servicio.priceLabel}
-                  </div>
-                  <div>Ofrecido por: {servicio.owner}</div>
-                  {servicio.contactPhone.trim() && (
-                    <div>Contacto publicado: {servicio.contactPhone}</div>
+                  <div>Ofrecido por: {service.owner}</div>
+                  {service.contactPhone.trim() && (
+                    <div>Contacto publicado: {service.contactPhone}</div>
                   )}
                   <button
                     type="button"
-                    style={estiloAccion}
-                    onClick={() => openService(servicio.id)}
+                    className="kuska-chat-action"
+                    onClick={() => openResult(service)}
                   >
-                    Ver servicio y su ubicación
+                    Ver servicio y ubicación
                   </button>
-                  {servicio.ownerId && (
+                  {service.ownerId && (
                     <button
                       type="button"
-                      style={estiloAccion}
-                      onClick={() => openProfile(servicio.ownerId, servicio.owner)}
+                      className="kuska-chat-action"
+                      onClick={() => openResult(service, true)}
                     >
-                      Ver perfil de {servicio.owner}
+                      Ver perfil de {service.owner}
                     </button>
                   )}
-                  <small>La ubicación pública se muestra en el detalle del servicio.</small>
                 </div>
               ))}
               {item.publicaciones?.map((post) => (
                 <button
                   key={`post-${post.id}`}
                   type="button"
-                  style={estiloAccion}
-                  onClick={() => openPost(post.id)}
+                  className="kuska-chat-action"
+                  onClick={() => openPostResult(post)}
                 >
                   Ver publicación: {post.title}
                 </button>
               ))}
-              {item.acciones?.map((destino) => (
+              {item.acciones?.map((destination) => (
                 <button
-                  key={`nav-${destino}`}
+                  key={`nav-${destination}`}
                   type="button"
-                  style={estiloAccion}
-                  onClick={() => navigate(destino)}
+                  className="kuska-chat-action"
+                  onClick={() => navigate(destination)}
                 >
-                  Ir a {nombreSeccion(destino)}
+                  Ir a {nombreSeccion(destination)}
                 </button>
               ))}
+              {item.id === messages[messages.length - 1]?.id && item.sugerencias && (
+                <div className="kuska-chat-suggestions">
+                  {item.sugerencias.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      disabled={sending || restoring}
+                      onClick={() => void send(suggestion)}
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              )}
               <small>{item.time}</small>
             </div>
           </article>
         ))}
-        {sending && (
+        {(sending || restoring) && (
           <div className="chat-day" role="status">
-            Buscando…
+            {restoring ? "Preparando tu conversación…" : "Consultando opciones…"}
           </div>
         )}
       </div>
-      <form className="chat-composer" onSubmit={sendMessage}>
+      <form className="chat-composer" onSubmit={submit}>
         <input
+          ref={inputRef}
           value={message}
           onChange={(event) => setMessage(event.target.value)}
-          placeholder="Escribe un mensaje..."
-          aria-label="Mensaje"
+          placeholder="Cuéntame qué necesitas…"
+          aria-label="Mensaje para el Agente Kuska"
           maxLength={300}
-          disabled={sending}
+          disabled={sending || restoring}
+          autoComplete="off"
         />
-        <button type="submit" aria-label="Enviar mensaje" disabled={!message.trim() || sending}>
+        <button
+          type="submit"
+          aria-label="Enviar mensaje"
+          disabled={!message.trim() || sending || restoring}
+        >
           <Icon name="send" size={21} />
         </button>
       </form>
