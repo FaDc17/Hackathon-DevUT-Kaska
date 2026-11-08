@@ -4,6 +4,8 @@
 
 APK debug de `main`, preparado el 8 de noviembre de 2026. Incluye las mejoras de experiencia, sincronización, sesión, mapas, agente y compresión de fotografías, junto con las correcciones recientes de Servicios del equipo.
 
+Actualización del inicio de sesión: se retiró el enlace «¿Perdiste tu contraseña?» porque la recuperación no está disponible. Para este cambio se verificaron TypeScript, Vite y la compilación Android, y se actualizó la huella del APK.
+
 Descarga `Kuska-debug.apk` en el celular, abre el archivo y permite la instalación desde ese navegador o administrador de archivos si Android lo solicita. Es una compilación de pruebas firmada con la clave debug, no una publicación de Play Store.
 
 La aplicación se conecta al backend existente:

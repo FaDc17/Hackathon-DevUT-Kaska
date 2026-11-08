@@ -78,9 +78,6 @@ export function AuthScreen({
             {loading ? "Verificando…" : "Ingresar"}
           </button>
         </form>
-        <button className="text-button" onClick={() => go("recover")}>
-          ¿Perdiste tu contraseña?
-        </button>
         <div className="auth-divider">
           <span>o</span>
         </div>
