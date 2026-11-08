@@ -65,6 +65,7 @@ export function AgentChat({ back, district, services, posts, navigate, openServi
   ]);
   const nextId = useRef(2);
   const activeRequest = useRef<AbortController | null>(null);
+  const historyRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const update = () => setConnected(navigator.onLine);
@@ -77,8 +78,44 @@ export function AgentChat({ back, district, services, posts, navigate, openServi
     };
   }, []);
 
+  useEffect(() => {
+    const node = historyRef.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, [messages, sending]);
+
   function answer(entry: Omit<Entrada, "id" | "sender" | "time">) {
     setMessages((previous) => [...previous, { id: nextId.current++, sender: "agent", time: "Ahora", ...entry }]);
+  }
+
+  function registrarDiagnostico(contexto: string, error: unknown, extra: Record<string, unknown> = {}) {
+    const detalle = error instanceof Error ? { name: error.name, message: error.message } : { value: String(error) };
+    console.warn("[KUSKA_AGENT]", { contexto, ...detalle, ...extra });
+  }
+
+  function responderPreguntaGeneral(consulta: string): boolean {
+    const q = consulta.toLowerCase();
+    if (/publicar un servicio|publicar servicio|ofrecer un servicio|quiero publicar|como publico/.test(q)) {
+      answer({ text: "Puedes publicar tu servicio desde la sección Servicios. Allí encontrarás la opción para compartirlo con tu comunidad.", acciones: ["services"] });
+      return true;
+    }
+    if (/mi perfil|ver mi perfil|perfil/.test(q)) {
+      answer({ text: "Puedes revisar tu perfil desde la pantalla de perfil. Allí verás tus datos y publicaciones.", acciones: ["profile"] });
+      return true;
+    }
+    if (/como publicar|publicacion|publicaciones|comunidad|solidaridad/.test(q)) {
+      answer({ text: "Puedes compartir una necesidad o apoyo desde la sección Comunidad. Ahí se publican solicitudes y ayudas vecinales.", acciones: ["solidarity"] });
+      return true;
+    }
+    if (/mapa|ubicaci[óo]n|donde|lugar/.test(q)) {
+      answer({ text: "Puedes explorar ubicaciones y servicios desde el mapa comunitario. También puedes abrirlo desde la sección Mapa.", acciones: ["map"] });
+      return true;
+    }
+    if (/ayuda|que puedo hacer|que puedes hacer|opciones|como usar kuska|tutorial/.test(q)) {
+      answer({ text: "Puedo ayudarte a buscar servicios o publicaciones y también abrir las pantallas principales de Kuska.", acciones: ["services", "solidarity", "emergency", "map", "profile"] });
+      return true;
+    }
+    return false;
   }
 
   function respuestaLocal(consulta: string, motivo: string) {
@@ -103,12 +140,10 @@ export function AgentChat({ back, district, services, posts, navigate, openServi
 
     const destination = seccionSolicitada(consulta);
     if (destination) {
-      // Sin conexión, abrir pantallas locales no requiere invocar ningún modelo externo.
       navigate(destination);
       return;
     }
-    if (/^(ayuda|no se usar|que puedo hacer|que puedes hacer|opciones)[!?. ]*$/i.test(consulta)) {
-      answer({ text: "Puedo ayudarte a buscar servicios o publicaciones. También puedo abrir una pantalla por ti. Elige a dónde deseas ir:", acciones: ["services", "solidarity", "emergency", "map", "profile"] });
+    if (responderPreguntaGeneral(consulta)) {
       return;
     }
     setSending(true);
@@ -117,19 +152,53 @@ export function AgentChat({ back, district, services, posts, navigate, openServi
       setSending(false);
       return;
     }
+    const mensaje = typeof consulta === "string" ? consulta.trim() : String(consulta ?? "");
+    const distritoUsuario = typeof district === "string" ? district.trim() : String(district ?? "");
+    if (!mensaje || !distritoUsuario) {
+      respuestaLocal(consulta, "No pude preparar la consulta para buscar en internet.");
+      setSending(false);
+      return;
+    }
+
     const controller = new AbortController();
     activeRequest.current = controller;
-    const timeout = window.setTimeout(() => controller.abort(), TIEMPO_MAXIMO_MS);
+    const timeout = window.setTimeout(() => {
+      registrarDiagnostico("timeout", new Error("Tiempo de espera agotado"), { url: API });
+      controller.abort();
+    }, TIEMPO_MAXIMO_MS);
     try {
-      // No enviamos nombre, teléfono ni dirección: solo el texto y distrito.
+      const payload = JSON.stringify({ mensaje, distritoUsuario });
       const res = await fetch(API, {
-        method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" },
-        body: JSON.stringify({ mensaje: consulta, distritoUsuario: district }),
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: payload,
         signal: controller.signal,
       });
-      if (!res.ok) throw new Error(`Error HTTP ${res.status}`);
-      const info = await res.json() as RespuestaNube;
-      if (!Array.isArray(info.resultados)) throw new Error("Respuesta de Cloudflare inválida");
+
+      if (!res.ok) {
+        const detalle = await res.text().catch(() => "");
+        registrarDiagnostico("error_http", new Error(`HTTP ${res.status}`), {
+          status: res.status,
+          contentType: res.headers.get("content-type"),
+          detalle: detalle.slice(0, 180),
+          url: API,
+        });
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      let info: RespuestaNube;
+      try {
+        info = (await res.json()) as RespuestaNube;
+      } catch (parseError) {
+        registrarDiagnostico("json_invalido", parseError, { contentType: res.headers.get("content-type"), url: API });
+        throw new Error("JSON inválido");
+      }
+
+      if (!info || typeof info !== "object" || !Array.isArray(info.resultados)) {
+        registrarDiagnostico("respuesta_invalida", new Error("Respuesta sin array de resultados"), { info });
+        throw new Error("Respuesta inválida");
+      }
+
       const locales = buscarServiciosLocales(consulta, services, district);
       const comunitarias = buscarPublicacionesLocales(consulta, posts, district);
       answer({
@@ -137,9 +206,26 @@ export function AgentChat({ back, district, services, posts, navigate, openServi
         text: `${info.mensaje ?? "Búsqueda completada."}${!info.usoIA ? " Usé los filtros de respaldo del servidor." : ""}${(locales.length + comunitarias.length) ? " También tengo resultados guardados en esta aplicación." : ""}`,
         acciones: info.resultados.length || locales.length || comunitarias.length ? undefined : ["services", "solidarity"],
       });
-    } catch {
-      // Un fallo de red o cuota NO inventa resultados ni se presenta como IA offline.
-      respuestaLocal(consulta, "No pude conectar con la búsqueda en internet.");
+    } catch (error) {
+      const messageError = error instanceof Error ? error.message : String(error);
+      const isTimeout = error instanceof DOMException && error.name === "AbortError" || /timeout|tiempo de espera/i.test(messageError);
+      const isCors = /Failed to fetch|NetworkError|cors|cross-origin|crossorigin/i.test(messageError);
+      const isJson = /JSON inválido|respuesta inválida|invalid json/i.test(messageError);
+      const isHttp = /^HTTP \d{3}$/.test(messageError);
+
+      if (isTimeout) registrarDiagnostico("timeout", error, { url: API });
+      else if (isCors) registrarDiagnostico("posible_cors_o_red", error, { url: API });
+      else if (isHttp) registrarDiagnostico("error_http", error, { url: API });
+      else if (isJson) registrarDiagnostico("json_invalido", error, { url: API });
+      else registrarDiagnostico("fallo_ejecucion", error, { url: API });
+
+      const fallback = isTimeout
+        ? "No pude consultar los resultados en internet. Buscaré entre los servicios guardados en tu dispositivo."
+        : isJson
+          ? "La respuesta del servidor no fue válida. Buscaré entre los servicios guardados en tu dispositivo."
+          : "No pude consultar los resultados en internet. Buscaré entre los servicios guardados en tu dispositivo.";
+
+      respuestaLocal(consulta, fallback);
     } finally {
       window.clearTimeout(timeout);
       if (activeRequest.current === controller) activeRequest.current = null;
@@ -162,7 +248,7 @@ export function AgentChat({ back, district, services, posts, navigate, openServi
         </div>
         <span className="online-dot" aria-label={connected ? "Con internet" : "Sin internet"} style={connected ? undefined : { backgroundColor: "#94A3B8", boxShadow: "0 0 0 4px #e2e8f0" }} />
       </div>
-      <div className="chat-history" aria-live="polite">
+      <div className="chat-history" ref={historyRef} aria-live="polite">
         <div className="chat-day">Hoy</div>
         {messages.map((item) => (
           <article className={`chat-message ${item.sender}`} key={item.id}>
