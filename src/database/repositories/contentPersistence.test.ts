@@ -50,6 +50,8 @@ import { cacheRemoteUser } from "./users";
 import { isRemoteImage, persistSelectedImage } from "../../services/images";
 import { updateProfileOnlineOrQueue, deleteOwnAccount } from "../../services/session";
 import { ApiError } from "../../services/apiClient";
+import { synchronizeImage } from "../../services/blobImages";
+import { syncPendingProfileUpdates } from "../../services/sync";
 
 let sql: DatabaseSync;
 let fixturePath: string;
@@ -181,6 +183,174 @@ afterEach(() => {
 });
 
 describe("SQLite content persistence and its existing synchronization queue", () => {
+  it("uploads an offline image only after the parent is acknowledged and persists a permanent URL", async () => {
+    await createService({ ...service(), image: "https://localhost/_capacitor_file_/photo.png" });
+    let pending = await pendingSyncOperations();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].Entidad).toBe("Servicios");
+    await markSyncOperationSucceeded(pending[0].IdOperacion, "Servicios", String(service().id));
+    pending = await pendingSyncOperations();
+    expect(pending[0].Entidad).toBe("ImagenesServicio");
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4])),
+        ),
+    );
+    state.request.mockResolvedValue({
+      id: `img-${service().id}`,
+      url: "https://blobkuska.blob.core.windows.net/imagenes/kuska/photo",
+    });
+    await synchronizeImage(pending[0]);
+    const row = sql.prepare("SELECT RutaLocal,UrlRemota,SyncEstado FROM ImagenesServicio").get();
+    expect(row).toMatchObject({
+      RutaLocal: "https://localhost/_capacitor_file_/photo.png",
+      UrlRemota: "https://blobkuska.blob.core.windows.net/imagenes/kuska/photo",
+      SyncEstado: "sincronizado",
+    });
+    expect(await pendingSyncOperations()).toEqual([]);
+    const form = state.request.mock.calls[0][1].body as FormData;
+    expect(form.get("entidadId")).toBe(service().id);
+    expect(form.get("archivo")).toBeInstanceOf(Blob);
+  });
+  it("keeps both the local file reference and image queue when Blob fails", async () => {
+    await createPost({ ...post(), image: "https://localhost/_capacitor_file_/photo.png" });
+    const parent = (await pendingSyncOperations())[0];
+    await markSyncOperationSucceeded(parent.IdOperacion, "Publicaciones", String(post().id));
+    const image = (await pendingSyncOperations())[0];
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4])),
+        ),
+    );
+    state.request.mockRejectedValue(new ApiError("Storage no disponible", 503, "BLOB_UNAVAILABLE"));
+    await expect(synchronizeImage(image)).rejects.toThrow("Storage no disponible");
+    expect((await pendingSyncOperations())[0].IdOperacion).toBe(image.IdOperacion);
+    expect(sql.prepare("SELECT UrlRemota FROM ImagenesPublicacion").get()?.UrlRemota).toBeNull();
+    expect((await listPosts())[0].imagePending).toBe(true);
+  });
+  it("does not overwrite a replacement selected during an in-flight upload", async () => {
+    await createService({ ...service(), image: "https://localhost/_capacitor_file_/first.png" });
+    const parent = (await pendingSyncOperations())[0];
+    await markSyncOperationSucceeded(parent.IdOperacion, "Servicios", String(service().id));
+    const image = (await pendingSyncOperations())[0];
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4])),
+        ),
+    );
+    let confirm: ((value: unknown) => void) | undefined;
+    state.request.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          confirm = resolve;
+        }),
+    );
+    const uploading = synchronizeImage(image);
+    await vi.waitFor(() => expect(confirm).toBeDefined());
+    await updateService({
+      ...service(),
+      image: "https://localhost/_capacitor_file_/replacement.png",
+    });
+    confirm!({
+      id: image.EntidadId,
+      url: "https://blobkuska.blob.core.windows.net/imagenes/kuska/first",
+    });
+    await uploading;
+    expect(sql.prepare("SELECT RutaLocal,UrlRemota FROM ImagenesServicio").get()).toMatchObject({
+      RutaLocal: "https://localhost/_capacitor_file_/replacement.png",
+      UrlRemota: null,
+    });
+    expect(
+      sql
+        .prepare("SELECT COUNT(*) AS n FROM ColaSincronizacion WHERE Entidad='ImagenesServicio'")
+        .get()?.n,
+    ).toBe(1);
+  });
+  it("does not upload an image after its parent has been deleted", async () => {
+    await createService({ ...service(), image: "https://localhost/_capacitor_file_/photo.png" });
+    const parent = (await pendingSyncOperations())[0];
+    await markSyncOperationSucceeded(parent.IdOperacion, "Servicios", String(service().id));
+    await deleteService(service().id, "owner-real-id");
+    const removal = (await pendingSyncOperations())[0];
+    await markSyncOperationSucceeded(removal.IdOperacion, "Servicios", String(service().id));
+    const request = vi.fn();
+    vi.stubGlobal("fetch", request);
+    await synchronizeImage((await pendingSyncOperations())[0]);
+    expect(request).not.toHaveBeenCalled();
+    expect(await pendingSyncOperations()).toEqual([]);
+  });
+  it("never persists an expiring Blob SAS from a displayed image", async () => {
+    await createService({
+      ...service(),
+      image: "https://blobkuska.blob.core.windows.net/imagenes/kuska/photo?sv=test&sig=temporary",
+    });
+    const op = (await pendingSyncOperations())[0];
+    expect(JSON.parse(op.Payload!).images[0].url).toBe(
+      "https://blobkuska.blob.core.windows.net/imagenes/kuska/photo",
+    );
+    expect(sql.prepare("SELECT UrlRemota FROM ImagenesServicio").get()?.UrlRemota).not.toContain(
+      "sig=",
+    );
+  });
+  it("keeps a remote reference when editing a displayed private photo without selecting a replacement", async () => {
+    await createService({
+      ...service(),
+      image: "blob:temporary-presentation",
+      imageDisplaySource: "blob:temporary-presentation",
+      imageReference: "https://blobkuska.blob.core.windows.net/imagenes/kuska/photo",
+    });
+    expect(sql.prepare("SELECT UrlRemota,RutaLocal FROM ImagenesServicio").get()).toMatchObject({
+      UrlRemota: "https://blobkuska.blob.core.windows.net/imagenes/kuska/photo",
+      RutaLocal: null,
+    });
+    expect(
+      sql
+        .prepare("SELECT COUNT(*) AS n FROM ColaSincronizacion WHERE Entidad='ImagenesServicio'")
+        .get()?.n,
+    ).toBe(0);
+  });
+  it("drains the existing queue through text confirmation followed by multipart photo upload", async () => {
+    await createService({ ...service(), image: "https://localhost/_capacitor_file_/photo.png" });
+    online(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4])),
+        ),
+    );
+    state.request.mockImplementation(async (path: string, options: RequestInit) => {
+      if (path === "/api/sync/operations")
+        return (JSON.parse(String(options.body)) as Array<{ operationId: string }>).map((op) => ({
+          operationId: op.operationId,
+          synchronizedOperation: true,
+          error: null,
+        }));
+      if (path === "/api/imagenes")
+        return {
+          id: `img-${service().id}`,
+          url: "https://blobkuska.blob.core.windows.net/imagenes/kuska/photo",
+        };
+      return [];
+    });
+    await syncPendingProfileUpdates();
+    expect(await pendingSyncOperations()).toEqual([]);
+    expect(sql.prepare("SELECT SyncEstado FROM Servicios").get()?.SyncEstado).toBe("sincronizado");
+    expect(sql.prepare("SELECT SyncEstado,UrlRemota FROM ImagenesServicio").get()).toMatchObject({
+      SyncEstado: "sincronizado",
+      UrlRemota: "https://blobkuska.blob.core.windows.net/imagenes/kuska/photo",
+    });
+  });
   it("keeps original textual IDs, pending content and local photos after reopening the database", async () => {
     await createService({
       ...service(),

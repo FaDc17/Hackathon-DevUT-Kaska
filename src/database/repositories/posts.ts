@@ -11,10 +11,16 @@ import {
 import { apiRequest } from "../../services/apiClient";
 import { getSecureSession } from "../../services/secureSession";
 import {
+  pendingImageStatements,
+  resolveImages,
+  tryUploadBrowserImage,
+} from "../../services/blobImages";
+import {
   isRemoteImage,
   browserImage,
   saveBrowserImage,
   removeBrowserImage,
+  recordImageReference,
 } from "../../services/images";
 import {
   commitPending,
@@ -68,6 +74,7 @@ function fromRemote(post: RemotePost): Post {
     lat: post.latitude ?? undefined,
     lng: post.longitude ?? undefined,
     image: post.images[0]?.url || undefined,
+    imageId: post.images[0]?.id,
     createdAt: new Date(post.publishedAt).getTime(),
     syncStatus: "sincronizado",
     comments: post.replies.map((reply) => ({
@@ -83,10 +90,13 @@ export async function listPosts(): Promise<Post[]> {
   const remote = await readRemoteList<RemotePost>("/api/publicaciones");
   const posts = new Map<string, Post>((remote ?? []).map((value) => [value.id, fromRemote(value)]));
   if (!Capacitor.isNativePlatform())
-    return [...posts.values()].map((post) => {
-      const image = browserImage("post", post.id);
-      return image ? { ...post, image, imagePending: true } : post;
-    });
+    return resolveImages(
+      "post",
+      [...posts.values()].map((post) => {
+        const image = browserImage("post", post.id);
+        return image ? { ...post, image, imagePending: true } : post;
+      }),
+    );
   const db = await getDatabase();
   const session = await getSecureSession();
   const result = await db.query(
@@ -173,7 +183,10 @@ export async function listPosts(): Promise<Post[]> {
         ];
     }
   }
-  return [...posts.values()].sort((a, b) => b.createdAt - a.createdAt);
+  return resolveImages(
+    "post",
+    [...posts.values()].sort((a, b) => b.createdAt - a.createdAt),
+  );
 }
 async function postPayload(post: Post) {
   const typeId =
@@ -194,6 +207,7 @@ async function postPayload(post: Post) {
   };
 }
 async function savePost(post: Post, action: "crear" | "actualizar"): Promise<void> {
+  post = { ...post, image: post.image ? recordImageReference(post) : undefined };
   const ownerId = await requireOwner(post.ownerId);
   const knownRemote = (await cachedList<RemotePost>("/api/publicaciones"))?.find(
     (row) => row.id === String(post.id),
@@ -207,6 +221,7 @@ async function savePost(post: Post, action: "crear" | "actualizar"): Promise<voi
       { method: action === "crear" ? "POST" : "PUT", body: JSON.stringify(payload) },
     );
     await upsertRemoteCache("/api/publicaciones", saved);
+    void tryUploadBrowserImage("post", post.id);
     return;
   }
   const db = await getDatabase();
@@ -238,7 +253,7 @@ async function savePost(post: Post, action: "crear" | "actualizar"): Promise<voi
   if (post.image)
     statements.push({
       statement: `INSERT INTO ImagenesPublicacion (IdImagen,IdPublicacion,RutaLocal,UrlRemota,Orden,SyncEstado)
-    VALUES (?,?,?,?,0,?) ON CONFLICT(IdImagen) DO UPDATE SET RutaLocal=excluded.RutaLocal,UrlRemota=excluded.UrlRemota,SyncEstado=excluded.SyncEstado;`,
+    VALUES (?,?,?,?,0,?) ON CONFLICT(IdImagen) DO UPDATE SET UrlRemota=CASE WHEN RutaLocal=excluded.RutaLocal THEN UrlRemota ELSE excluded.UrlRemota END,SyncEstado=CASE WHEN RutaLocal=excluded.RutaLocal THEN SyncEstado ELSE excluded.SyncEstado END,RutaLocal=excluded.RutaLocal;`,
       values: [
         `img-${post.id}`,
         payload.id,
@@ -247,7 +262,13 @@ async function savePost(post: Post, action: "crear" | "actualizar"): Promise<voi
         isRemoteImage(post.image) ? "sincronizado" : "pendiente",
       ],
     });
-  await commitPending(statements, "Publicaciones", payload.id, action, payload);
+  await commitPending(
+    [...statements, ...(await pendingImageStatements("post", post.id, post.image))],
+    "Publicaciones",
+    payload.id,
+    action,
+    payload,
+  );
 }
 export async function createPost(post: Post, image?: string): Promise<void> {
   return savePost({ ...post, image: image ?? post.image }, "crear");
